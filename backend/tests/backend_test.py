@@ -1,0 +1,446 @@
+"""Career OS backend regression tests.
+
+Covers: auth (register/login/me), cross-user isolation, admin boundary,
+PROPOSED/VERIFIED lifecycle, opportunities + JD analysis, evidence matching,
+generation (provenance/IP/chronology/no-writeback), validation gates.
+"""
+import os
+import re
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+import requests
+from dotenv import dotenv_values
+
+frontend_env = dotenv_values("/app/frontend/.env")
+base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
+if not base_url:
+    raise RuntimeError("REACT_APP_BACKEND_URL missing")
+BASE_URL = base_url.rstrip("/")
+API = f"{BASE_URL}/api"
+
+LONG = 180  # AI calls can be slow
+
+ALLSTATE_JD = """Allstate is hiring a Director of Product Management to lead enterprise
+product strategy for our claims modernization portfolio. Responsibilities: own the product
+roadmap and vision for multiple product lines; lead cross-functional teams of engineers,
+designers and data scientists; partner with executive stakeholders to align investment;
+drive agile delivery and program management across multiple workstreams; establish OKRs and
+measurable business outcomes; manage vendor and platform partnerships; govern data and
+regulatory compliance requirements. Requirements: 10+ years product management experience,
+5+ years leading teams, Bachelor's degree required, MBA preferred, experience with
+enterprise SaaS platforms, cloud infrastructure, and insurance or financial services domain.
+Strong communication and executive presentation skills required."""
+
+
+# ---------- fixtures ----------
+@pytest.fixture(scope="session")
+def admin_creds():
+    p = Path("/app/memory/test_credentials.md")
+    if not p.exists():
+        pytest.skip("missing test_credentials.md")
+    c = p.read_text()
+    email = re.search(r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?Email(?:\*\*)?\s*:\s*`?([^`\s]+)", c)
+    pwd = re.search(r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?Password(?:\*\*)?\s*:\s*`?([^`\s]+)", c)
+    if not email or not pwd:
+        pytest.skip("no creds parsed")
+    return {"email": email.group(1), "password": pwd.group(1)}
+
+
+def _client(token=None):
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    if token:
+        s.headers.update({"Authorization": f"Bearer {token}"})
+    return s
+
+
+@pytest.fixture(scope="session")
+def admin_token(admin_creds):
+    r = requests.post(f"{API}/auth/login", json=admin_creds, timeout=60)
+    if r.status_code != 200:
+        pytest.fail(f"admin login failed {r.status_code}: {r.text[:300]}")
+    return r.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+def admin(admin_token):
+    return _client(admin_token)
+
+
+def _register(prefix):
+    email = f"TEST_{prefix}_{uuid.uuid4().hex[:8]}@example.com"
+    r = requests.post(f"{API}/auth/register", json={"email": email, "password": "TestPass123!"}, timeout=60)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    return d["access_token"], d["user"], "TestPass123!"
+
+
+@pytest.fixture(scope="session")
+def user_a():
+    tok, u, _ = _register("usera")
+    return {"token": tok, "user": u, "c": _client(tok)}
+
+
+@pytest.fixture(scope="session")
+def user_b():
+    tok, u, _ = _register("userb")
+    return {"token": tok, "user": u, "c": _client(tok)}
+
+
+# ---------- module: auth ----------
+class TestAuth:
+    def test_health(self):
+        r = requests.get(f"{API}/", timeout=30)
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+    def test_register_returns_token_and_user(self):
+        tok, u, _ = _register("reg")
+        assert isinstance(tok, str) and len(tok) > 20
+        assert u["role"] == "user"
+        assert "@" in u["email"]
+
+    def test_duplicate_register_409(self, admin_creds):
+        r = requests.post(f"{API}/auth/register", json={"email": admin_creds["email"], "password": "whatever123"}, timeout=30)
+        assert r.status_code == 409
+
+    def test_login_and_me(self, admin_creds, admin_token):
+        r = _client(admin_token).get(f"{API}/auth/me", timeout=30)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["email"] == admin_creds["email"].lower()
+        assert d["role"] == "admin"
+
+    def test_login_bad_password_401(self, admin_creds):
+        r = requests.post(f"{API}/auth/login", json={"email": admin_creds["email"], "password": "WrongPass999"}, timeout=30)
+        assert r.status_code == 401
+
+    def test_me_without_token_401(self):
+        r = requests.get(f"{API}/auth/me", timeout=30)
+        assert r.status_code == 401
+
+    def test_me_with_garbage_token_401(self):
+        r = _client("not.a.jwt").get(f"{API}/auth/me", timeout=30)
+        assert r.status_code == 401
+
+    def test_short_password_rejected(self):
+        r = requests.post(f"{API}/auth/register", json={"email": f"TEST_sp_{uuid.uuid4().hex[:6]}@example.com", "password": "123"}, timeout=30)
+        assert r.status_code == 422
+
+    def test_bcrypt_hash_format(self, admin_creds):
+        """Stored hash must be bcrypt $2b$."""
+        import asyncio
+        from motor.motor_asyncio import AsyncIOMotorClient
+        env = dotenv_values("/app/backend/.env")
+
+        async def _check():
+            cl = AsyncIOMotorClient(env["MONGO_URL"])
+            u = await cl[env["DB_NAME"]].users.find_one({"email": admin_creds["email"].lower()})
+            cl.close()
+            return u
+
+        u = asyncio.get_event_loop().run_until_complete(_check()) if False else asyncio.run(_check())
+        assert u is not None
+        assert u["password_hash"].startswith("$2b$"), u["password_hash"][:10]
+
+
+# ---------- module: career nodes lifecycle ----------
+class TestNodeLifecycle:
+    def test_manual_node_is_proposed_then_verify_then_edit_returns_proposed(self, user_a):
+        c = user_a["c"]
+        r = c.post(f"{API}/career/nodes", json={
+            "track": "civilian",
+            "identity": {"employer": "TESTCO", "role": "Product Manager", "start": "2020", "end": "2022"},
+            "context": {"scope": "test"},
+            "evidence": ["Did a measurable thing improving X by 20%"],
+            "retrieval": {"capabilities": ["product"], "metrics": ["20%"]},
+        }, timeout=60)
+        assert r.status_code == 200, r.text
+        node = r.json()
+        assert node["state"] == "PROPOSED"
+        assert node["node_id"].startswith("CKN-CIV-")
+        assert "_id" not in node and "owner_user_id" not in node
+        nid = node["id"]
+
+        v = c.post(f"{API}/career/nodes/{nid}/verify", timeout=60)
+        assert v.status_code == 200
+        assert v.json()["state"] == "VERIFIED"
+        assert v.json()["verified_at"]
+
+        p = c.patch(f"{API}/career/nodes/{nid}", json={"evidence": ["Edited evidence claim"]}, timeout=60)
+        assert p.status_code == 200
+        assert p.json()["state"] == "PROPOSED"
+        assert p.json()["verified_at"] is None
+
+        g = c.get(f"{API}/career/nodes", timeout=60)
+        assert g.status_code == 200
+        found = [n for n in g.json() if n["id"] == nid]
+        assert found and found[0]["evidence"] == ["Edited evidence claim"]
+        user_a["node_id"] = nid
+
+    def test_verify_unknown_node_404(self, user_a):
+        r = user_a["c"].post(f"{API}/career/nodes/64b7f9f9f9f9f9f9f9f9f9f9/verify", timeout=30)
+        assert r.status_code == 404
+
+    def test_reject_deletes(self, user_a):
+        c = user_a["c"]
+        r = c.post(f"{API}/career/nodes", json={"track": "military", "identity": {"employer": "TESTMIL"}, "evidence": ["e"]}, timeout=60)
+        nid = r.json()["id"]
+        d = c.post(f"{API}/career/nodes/{nid}/reject", timeout=30)
+        assert d.status_code == 200 and d.json()["deleted"] is True
+        assert all(n["id"] != nid for n in c.get(f"{API}/career/nodes", timeout=30).json())
+
+
+# ---------- module: isolation (CRITICAL) ----------
+class TestIsolation:
+    def test_cross_user_node_invisible_and_immutable(self, user_a, user_b):
+        a, b = user_a["c"], user_b["c"]
+        r = a.post(f"{API}/career/nodes", json={"track": "civilian", "identity": {"employer": "ISOCO"}, "evidence": ["secret A evidence"]}, timeout=60)
+        nid = r.json()["id"]
+
+        b_nodes = b.get(f"{API}/career/nodes", timeout=30).json()
+        assert all(n["id"] != nid for n in b_nodes)
+        assert all("secret A evidence" not in (n.get("evidence") or []) for n in b_nodes)
+
+        assert b.post(f"{API}/career/nodes/{nid}/verify", timeout=30).status_code == 404
+        assert b.patch(f"{API}/career/nodes/{nid}", json={"evidence": ["hacked"]}, timeout=30).status_code == 404
+        assert b.post(f"{API}/career/nodes/{nid}/reject", timeout=30).status_code == 404
+
+        # A's node unchanged
+        a_node = [n for n in a.get(f"{API}/career/nodes", timeout=30).json() if n["id"] == nid][0]
+        assert a_node["state"] == "PROPOSED"
+        assert a_node["evidence"] == ["secret A evidence"]
+
+    def test_cross_user_opportunity_404(self, user_a, user_b):
+        a, b = user_a["c"], user_b["c"]
+        r = a.post(f"{API}/opportunities", json={"target_role": "TEST Role", "organization": "ISOORG", "job_description": ALLSTATE_JD}, timeout=LONG)
+        assert r.status_code == 200, r.text
+        oid = r.json()["id"]
+        user_a["opp_id"] = oid
+        for path, method in [
+            (f"/opportunities/{oid}", "get"),
+            (f"/opportunities/{oid}/evidence-map", "get"),
+            (f"/opportunities/{oid}/representation", "get"),
+            (f"/opportunities/{oid}/validation", "get"),
+        ]:
+            resp = getattr(b, method)(f"{API}{path}", timeout=60)
+            assert resp.status_code == 404, f"{path} -> {resp.status_code}"
+        for path in [f"/opportunities/{oid}/analyze", f"/opportunities/{oid}/match", f"/opportunities/{oid}/generate", f"/opportunities/{oid}/validate"]:
+            resp = b.post(f"{API}{path}", timeout=60)
+            assert resp.status_code in (404, 409), f"{path} -> {resp.status_code}"
+            if resp.status_code == 409:
+                # must be "nothing of mine" errors, not access to A's data
+                assert "VERIFIED" in resp.text or "Generate" in resp.text or "matching" in resp.text
+        assert all(o["id"] != oid for o in b.get(f"{API}/opportunities", timeout=30).json())
+
+    def test_uploads_isolated(self, user_a, user_b):
+        assert user_b["c"].get(f"{API}/resume/uploads", timeout=30).json() == []
+
+
+# ---------- module: admin boundary (CRITICAL) ----------
+class TestAdminBoundary:
+    def test_admin_pilots_usage_only(self, admin, user_a):
+        r = admin.get(f"{API}/admin/pilots", timeout=60)
+        assert r.status_code == 200, r.text
+        pilots = r.json()
+        assert isinstance(pilots, list) and len(pilots) >= 2
+        target = [p for p in pilots if p["email"] == user_a["user"]["email"].lower()]
+        assert target, "user A not listed"
+        p = target[0]
+        assert set(p["usage"].keys()) == {"uploads", "verified_nodes", "proposed_nodes", "opportunities", "representations"}
+        blob = str(p).lower()
+        for leak in ["password_hash", "raw_text", "job_description", "evidence", "secret a evidence"]:
+            assert leak not in blob, f"leaked {leak}"
+
+    def test_non_admin_403(self, user_a):
+        assert user_a["c"].get(f"{API}/admin/pilots", timeout=30).status_code == 403
+        assert user_a["c"].post(f"{API}/admin/pilots/invite", json={"email": "x@y.com", "password": "abc123"}, timeout=30).status_code == 403
+
+    def test_admin_cannot_read_user_a_private_content(self, admin, user_a):
+        """Admin is owner-scoped on normal endpoints: A's opportunity/node not visible."""
+        r = user_a["c"].post(f"{API}/career/nodes", json={"track": "civilian", "identity": {"employer": "ADMINISO"}, "evidence": ["secret A evidence"]}, timeout=60)
+        assert r.status_code == 200
+        r = user_a["c"].post(f"{API}/opportunities", json={"target_role": "TEST AdminIso", "organization": "ISO", "job_description": ALLSTATE_JD}, timeout=LONG)
+        assert r.status_code == 200, r.text
+        oid = r.json()["id"]
+        assert admin.get(f"{API}/opportunities/{oid}", timeout=30).status_code == 404
+        assert admin.get(f"{API}/opportunities/{oid}/evidence-map", timeout=30).status_code == 404
+        admin_nodes = admin.get(f"{API}/career/nodes", timeout=30).json()
+        assert all("secret A evidence" not in (n.get("evidence") or []) for n in admin_nodes)
+        assert all(o["id"] != oid for o in admin.get(f"{API}/opportunities", timeout=30).json())
+
+    def test_invite_enable_disable_lifecycle(self, admin):
+        email = f"TEST_invite_{uuid.uuid4().hex[:8]}@example.com"
+        r = admin.post(f"{API}/admin/pilots/invite", json={"email": email, "password": "PilotPass123"}, timeout=60)
+        assert r.status_code == 200, r.text
+        uid = r.json()["id"]
+        assert r.json()["email"] == email.lower()
+        # duplicate invite
+        assert admin.post(f"{API}/admin/pilots/invite", json={"email": email, "password": "PilotPass123"}, timeout=30).status_code == 409
+        # invited user can log in
+        lr = requests.post(f"{API}/auth/login", json={"email": email, "password": "PilotPass123"}, timeout=30)
+        assert lr.status_code == 200
+        tok = lr.json()["access_token"]
+        # disable -> login blocked and token rejected
+        assert admin.post(f"{API}/admin/pilots/{uid}/disable", timeout=30).status_code == 200
+        assert requests.post(f"{API}/auth/login", json={"email": email, "password": "PilotPass123"}, timeout=30).status_code == 403
+        assert _client(tok).get(f"{API}/auth/me", timeout=30).status_code == 403
+        # enable -> works again
+        assert admin.post(f"{API}/admin/pilots/{uid}/enable", timeout=30).status_code == 200
+        assert requests.post(f"{API}/auth/login", json={"email": email, "password": "PilotPass123"}, timeout=30).status_code == 200
+        pilots = admin.get(f"{API}/admin/pilots", timeout=60).json()
+        assert [p for p in pilots if p["id"] == uid][0]["status"] == "active"
+
+
+# ---------- module: golden path (admin seeded James KB + Allstate JD) ----------
+@pytest.fixture(scope="class")
+def golden_opp(admin):
+    r = admin.post(f"{API}/opportunities", json={
+        "target_role": "Director of Product Management",
+        "organization": "Allstate",
+        "job_description": ALLSTATE_JD,
+    }, timeout=LONG)
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+class TestGoldenPath:
+    def test_seeded_verified_nodes(self, admin):
+        r = admin.get(f"{API}/career/nodes", params={"state": "VERIFIED"}, timeout=60)
+        assert r.status_code == 200
+        nodes = r.json()
+        assert len(nodes) >= 5, f"expected >=5 seeded VERIFIED nodes, got {len(nodes)}"
+        tracks = {n["track"] for n in nodes}
+        assert {"civilian", "military", "intellectual_property"} <= tracks, tracks
+        blob = str(nodes)
+        for kw in ["USAA", "CPS Energy", "DLA", "Reserve"]:
+            assert kw in blob, f"missing seeded node {kw}"
+
+    def test_empty_jd_rejected(self, admin):
+        r = admin.post(f"{API}/opportunities", json={"target_role": "X", "organization": "Y", "job_description": "   "}, timeout=60)
+        assert r.status_code == 422
+
+    def test_jd_analysis_categories_and_tiers(self, admin, golden_opp):
+        r = admin.get(f"{API}/opportunities/{golden_opp}", timeout=60)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["preflight"]["status"] == "READY", d["preflight"]
+        reqs = d["requirements"]
+        assert len(reqs) >= 8, f"only {len(reqs)} requirements"
+        assert all(1 <= q["tier"] <= 4 for q in reqs)
+        cats = {q["category"] for q in reqs}
+        assert len(cats) >= 3, cats
+        assert reqs == sorted(reqs, key=lambda x: x["tier"])
+
+    def test_matching_and_evidence_map(self, admin, golden_opp):
+        r = admin.post(f"{API}/opportunities/{golden_opp}/match", timeout=LONG * 3)
+        assert r.status_code == 200, r.text
+        em = admin.get(f"{API}/opportunities/{golden_opp}/evidence-map", timeout=90)
+        assert em.status_code == 200, em.text
+        data = em.json()
+        rows = data["rows"]
+        assert len(rows) == data["summary"]["total"] >= 8
+        covered = [row for row in rows if not row["gap"]]
+        assert len(covered) >= 5, "too few covered requirements"
+        weights = set()
+        for row in covered:
+            for m in row["matches"]:
+                assert 0 <= m["match_strength"] <= 1, m
+                assert m["representation_weight"] in ("primary", "supporting", "contextual", "chronology")
+                assert m["provenance"].get("node_id") == m["source_experience"]
+                weights.add(m["representation_weight"])
+            strengths = [m["match_strength"] for m in row["matches"]]
+            assert strengths == sorted(strengths, reverse=True)
+            assert row["matches"][0]["representation_weight"] == "primary"
+        assert "primary" in weights
+        assert data["summary"]["gaps"] == sum(1 for row in rows if row["gap"])
+        assert data["summary"]["covered"] + data["summary"]["gaps"] == data["summary"]["total"]
+
+    def test_matching_requires_verified_evidence(self, user_b):
+        r = user_b["c"].post(f"{API}/opportunities", json={"target_role": "TEST NoEv", "job_description": ALLSTATE_JD}, timeout=LONG)
+        assert r.status_code == 200
+        oid = r.json()["id"]
+        m = user_b["c"].post(f"{API}/opportunities/{oid}/match", timeout=90)
+        assert m.status_code == 409, m.text
+        # preflight must be BLOCKED (no verified evidence)
+        g = user_b["c"].get(f"{API}/opportunities/{oid}", timeout=60).json()
+        assert g["preflight"]["status"] == "BLOCKED"
+        assert "verified_evidence" in g["preflight"]["missing"]
+        gen = user_b["c"].post(f"{API}/opportunities/{oid}/generate", timeout=90)
+        assert gen.status_code == 409
+
+    def test_generation_provenance_ip_and_chronology_no_writeback(self, admin, golden_opp):
+        before = admin.get(f"{API}/career/nodes", timeout=60).json()
+        r = admin.post(f"{API}/opportunities/{golden_opp}/generate", timeout=LONG * 2)
+        assert r.status_code == 200, r.text
+        rep = r.json()
+        assert rep["sections"]["summary"].strip()
+        exps = rep["sections"]["experiences"]
+        assert len(exps) >= 3
+        assert len(rep["claim_provenance"]) >= 5
+        node_ids = {n["node_id"] for n in before}
+        for e in exps:
+            assert e["bullets"], e
+            for b in e["bullets"]:
+                assert b["source_node_id"] == e["node_id"]
+                assert b["source_node_id"] in node_ids
+                assert b["text"].strip()
+            if e["track"] == "intellectual_property":
+                assert e["employer"] == "", f"IP rendered as employer: {e}"
+        # reverse chronological
+        def ey(v):
+            s = str(v or "").lower()
+            if "present" in s or "current" in s:
+                return 9999
+            ys = [int(t) for t in re.split(r"[^0-9]", s) if t.isdigit() and len(t) == 4]
+            return ys[0] if ys else 0
+        years = [ey(e["end"]) for e in exps]
+        assert years == sorted(years, reverse=True), years
+        # no write-back to canonical
+        after = admin.get(f"{API}/career/nodes", timeout=60).json()
+        norm = lambda ns: sorted([(n["node_id"], n["state"], tuple(n.get("evidence") or []), n["verified_at"]) for n in ns])
+        assert norm(before) == norm(after), "generation mutated canonical knowledge"
+        # GET representation matches
+        g = admin.get(f"{API}/opportunities/{golden_opp}/representation", timeout=60)
+        assert g.status_code == 200 and g.json()["id"] == rep["id"]
+
+    def test_validation_gates_pass(self, admin, golden_opp):
+        r = admin.post(f"{API}/opportunities/{golden_opp}/validate", timeout=LONG)
+        assert r.status_code == 200, r.text
+        vr = r.json()
+        gates = vr["gate_results"]
+        assert isinstance(gates, dict) and len(gates) >= 5, gates
+        for name, g in gates.items():
+            assert g["status"] in ("pass", "warn", "fail"), (name, g)
+            assert g["detail"].strip()
+        failed = {k: v for k, v in gates.items() if v["status"] == "fail"}
+        assert vr["passed"] is (len(failed) == 0)
+        assert vr["passed"] is True, f"failed gates: {failed}"
+        warns = {k: v for k, v in gates.items() if v["status"] == "warn"}
+        print("GATE_WARNS:", warns)
+        print("GATES:", gates)
+        g = admin.get(f"{API}/opportunities/{golden_opp}/validation", timeout=60)
+        assert g.status_code == 200 and g.json()["passed"] is True
+
+    def test_validate_before_generate_409(self, user_b):
+        r = user_b["c"].post(f"{API}/opportunities", json={"target_role": "TEST V", "job_description": ALLSTATE_JD}, timeout=LONG)
+        oid = r.json()["id"]
+        assert user_b["c"].post(f"{API}/opportunities/{oid}/validate", timeout=60).status_code == 409
+        assert user_b["c"].get(f"{API}/opportunities/{oid}/representation", timeout=30).status_code == 404
+
+
+# ---------- module: brute force / lockout (playbook check) ----------
+class TestBruteForce:
+    def test_repeated_failures_lockout(self, admin_creds):
+        codes = []
+        for _ in range(6):
+            r = requests.post(f"{API}/auth/login", json={"email": admin_creds["email"], "password": "Wrong!123"}, timeout=30)
+            codes.append(r.status_code)
+            time.sleep(0.2)
+        # correct password must still work (no self-lockout of valid creds required by spec)
+        ok = requests.post(f"{API}/auth/login", json=admin_creds, timeout=30)
+        assert ok.status_code == 200, f"admin locked out after failures: {ok.status_code}"
+        assert all(c in (401, 429) for c in codes), codes

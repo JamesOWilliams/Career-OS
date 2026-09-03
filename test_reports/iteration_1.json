@@ -1,0 +1,49 @@
+{
+  "summary": "Full backend + frontend E2E validation of Career OS MVP. Created pytest suite (28 tests, 100% pass) covering auth, node lifecycle, cross-user isolation, admin boundary, JD analysis, evidence matching, generation and validation gates. Frontend E2E ran the complete golden path as admin (login -> 5 VERIFIED James nodes -> Allstate DPM opportunity -> 15 tiered requirements -> evidence matching (COVERED 9 / GAPS 6) -> generation with per-claim CKN trace badges -> validation 10/10 gates PASS) plus a non-admin user run (admin nav hidden, /admin redirects, preflight BLOCKED, buttons disabled, UI register/logout). yarn build succeeds with zero warnings/errors. Isolation and admin-boundary invariants independently confirmed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "No rate limiting / brute-force lockout: 6+ consecutive wrong-password attempts all return 401 with no throttle (playbook expects lockout after 5 fails). Valid creds still work, so not blocking, but auth is unthrottled."},
+      {"endpoint": "CORS middleware (server.py:596)", "issue": "allow_credentials=True combined with a possible '*' origin default (os.environ.get('CORS_ORIGINS','*')) is an invalid/unsafe combo for credentialed requests; require explicit origins from env with no wildcard fallback."},
+      {"endpoint": "POST /api/admin/pilots/{user_id}/enable|disable", "issue": "No ObjectId validation and no 404 when user_id does not exist -> a malformed id raises bson InvalidId (500) and a valid-but-unknown id returns 200 with a no-op."},
+      {"endpoint": "GET /api/opportunities/{id}/evidence-map", "issue": "Returns gap:true rows for every requirement when matching has never been run, i.e. it is indistinguishable from a real 'no sufficient evidence' result. Recommend a matched/has_run flag in the response (drives the frontend bug below)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OpportunityDetail / EvidenceMap", "issue": "Evidence Map renders the pre-match map (TOTAL 15 / COVERED 0 / GAPS 15, 'No sufficient canonical evidence' on every requirement) both before matching is run and while matching is in flight — a false, alarming 'everything is a gap' state. No loading/skeleton state while busy==='match'. Only after matching completes does it flip to COVERED 9 / GAPS 6.", "selector": "[data-testid=\"evidence-map-table\"]", "priority": "HIGH"},
+      {"component": "Admin.jsx invite modal", "issue": "Invite Pilot modal cannot be dismissed with Escape and its fixed full-screen overlay intercepts pointer events on the sidebar nav, so nav clicks silently fail until the X is clicked. Add Escape handler + backdrop click-to-close.", "selector": "[data-testid=\"invite-pilot-btn\"] modal overlay", "priority": "MEDIUM"},
+      {"component": "OpportunityDetail validation tab", "issue": "data-testid=\"validation-gate-status\" is present only once (summary card); the 10 individual gate cards use data-testid=\"policy-rule-item\" with no per-gate testid/status attribute, so a test cannot assert individual gate results.", "selector": "[data-testid=\"validation-gate-status\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Opportunity detail load", "issue": "Representation and Validation are fetched unconditionally on mount and log 404s to the browser console before generation/validation exist. Functionally harmless but noisy; treat 404 as an empty state without a console error.", "affected_selectors": ["[data-testid=\"tab-representation\"]", "[data-testid=\"tab-validation\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "All pages (toast)", "issues": ["Success toast (top-right) overlaps the 'Back' link on the opportunity detail header, making it briefly unclickable."]},
+      {"screen": "Evidence Map / Career Profile", "issues": ["Rationale text uses text-slate-500 on #0B0F17 (contrast ratio ~3:1) — below WCAG AA for body text; same for 'TOTAL 15' meta labels."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Evidence Map: distinguish 'matching not yet run' from real gaps (backend flag or frontend guard) and show a loading state while matching is in flight — current UI shows 15 false gaps.",
+    "Admin invite modal: add Escape/backdrop close so the overlay does not block sidebar navigation.",
+    "Add ObjectId validation + 404 to /api/admin/pilots/{user_id}/enable|disable.",
+    "Consider login throttling/lockout and remove the '*' CORS fallback while allow_credentials=True.",
+    "Add per-gate data-testid (e.g. validation-gate-{name}) for validation cards."
+  ],
+  "critical_code_review_comments": [
+    "OwnedRepo is a clean single choke point and it holds: every cross-user probe (GET/PATCH/POST verify/reject/match/generate/validate on another user's node/opportunity) returned 404, admin included. No client-supplied owner_user_id is ever trusted.",
+    "ser()/ser_keep() correctly strip _id and owner_user_id from all responses; no ObjectId leakage observed.",
+    "Generation verified as non-mutating: career_knowledge node states/evidence/verified_at were byte-identical before and after POST /generate.",
+    "server.py is 602 lines and approaching the 700-line split threshold; auth/career/opportunity/admin routers should be modularized before further growth.",
+    "@app.on_event('startup') is deprecated in current FastAPI — migrate to the lifespan context manager."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (28/28 pytest)", "frontend": "~92% (all golden-path flows pass; evidence-map pre-match false-gap state and admin modal overlay are defects)"},
+  "seed_data_creation": "Registered TEST_usera_*/TEST_userb_*/TEST_reg_* users for isolation, TEST_invite_* pilots via admin invite, TEST_ui_* user via UI register, plus TEST_* career nodes and 'TEST *' opportunities under those throwaway users. Admin account got one extra 'Director of Product Management / Allstate' opportunity (golden regression). No seeded James Williams data modified.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "willsky.james@gmail.com / CareerOS2026! (admin, owns seeded James KB); new users via POST /api/auth/register",
+  "context_for_next_testing_agent": "Regression suite is /app/backend/tests/backend_test.py (run with configured pytest.ini; full run ~100s because of live AI calls). It covers isolation (TestIsolation), admin boundary (TestAdminBoundary) and the golden path (TestGoldenPath: JD analysis -> match -> generate -> validate, asserting 10 gates pass, IP never rendered as employer, reverse-chronological order, per-bullet source_node_id, and no canonical write-back). Note GoldenPath tests are order-dependent within the class (match must run before generate/validate) — run the whole class, not single -k tests. Frontend flow verified end-to-end at /opportunities/{id}; when scripting, wait for generate/validate buttons to become enabled (they are disabled while busy or before map/rep exist) rather than waiting only on selectors.",
+  "rca_of_the_issue": "Evidence-map false gaps: GET /api/opportunities/{id}/evidence-map builds one row per requirement and sets gap=len(matches)==0, so with zero evidence_matches documents (matching never run / still running) it legitimately returns all-gap rows. OpportunityDetail fetches this on mount and renders it because `map` is non-null, so the 'Run Evidence Matching to build the map' placeholder is never shown and the user sees 'No sufficient canonical evidence' for every requirement. Fix by adding a has_matching_run/matched flag server-side (or checking evidence_matches count) and gating the table on it plus busy==='match'."
+}

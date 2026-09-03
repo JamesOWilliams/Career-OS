@@ -1,0 +1,145 @@
+{
+  "project_title": "Career OS MVP v1.0",
+  "app_type": "hybrid_fullstack (enterprise-intelligence dashboard/workbench)",
+  "design_philosophy": {
+    "archetype": "Tactical Intelligence & Executive Clarity (Palantir Workbench x McKinsey Report)",
+    "core_principles": [
+      "Dense-but-legible high-information density workbench layout",
+      "Provenance-first affordances: AI proposes, humans verify, code guards truth",
+      "Strict node visual separation: PROPOSED (Amber dashed) vs VERIFIED (Emerald solid)",
+      "Track segmentation: civilian, military, intellectual_property",
+      "Visible evidence gaps highlight missing canonical evidence in coral-red border callouts",
+      "Zero-fluff enterprise dark slate color palette with tactical cyan accents"
+    ]
+  },
+  "theme": {
+    "default_mode": "dark",
+    "background_base": "#0B0F17",
+    "panel_surface": "#141C2B",
+    "panel_elevated": "#1A2436",
+    "border_subtle": "#243044",
+    "border_accent": "#06B6D4"
+  },
+  "typography": {
+    "font_family_display": "Plus Jakarta Sans, sans-serif",
+    "font_family_body": "IBM Plex Sans, sans-serif",
+    "font_family_mono": "IBM Plex Mono, monospace",
+    "hierarchy": {
+      "h1_hero": "text-3xl md:text-4xl font-bold tracking-tight",
+      "h2_section": "text-xl md:text-2xl font-semibold tracking-tight",
+      "h3_card": "text-base md:text-lg font-medium",
+      "body": "text-xs md:text-sm text-slate-300 leading-relaxed",
+      "caption_mono": "font-mono text-xs tracking-wider uppercase text-slate-400"
+    }
+  },
+  "colors": {
+    "background": {
+      "main": "#0B0F17",
+      "card": "#141C2B",
+      "card_hover": "#1E2A3F",
+      "muted": "#0F172A"
+    },
+    "border": {
+      "default": "#243044",
+      "highlight": "#06B6D4",
+      "proposed": "#D97706",
+      "verified": "#059669",
+      "gap_error": "#DC2626"
+    },
+    "text": {
+      "primary": "#F1F5F9",
+      "secondary": "#94A3B8",
+      "muted": "#64748B",
+      "cyan_accent": "#22D3EE"
+    },
+    "node_status": {
+      "PROPOSED": {
+        "bg": "rgba(217, 119, 6, 0.12)",
+        "border": "#D97706",
+        "text": "#FBBF24",
+        "badge": "bg-amber-500/10 text-amber-400 border-amber-500/30"
+      },
+      "VERIFIED": {
+        "bg": "rgba(16, 185, 129, 0.12)",
+        "border": "#059669",
+        "text": "#34D399",
+        "badge": "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+      },
+      "GAP": {
+        "bg": "rgba(220, 38, 38, 0.12)",
+        "border": "#DC2626",
+        "text": "#F87171",
+        "badge": "bg-rose-500/10 text-rose-400 border-rose-500/30"
+      }
+    },
+    "tracks": {
+      "civilian": "#38BDF8",
+      "military": "#A3E635",
+      "intellectual_property": "#C084FC"
+    }
+  },
+  "layout_and_grids": {
+    "sidebar": "w-64 bg-[#0E1420] border-r border-[#243044] h-screen sticky top-0 flex flex-col justify-between p-4",
+    "topbar": "h-14 border-b border-[#243044] bg-[#0E1420]/80 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-40",
+    "main_canvas": "flex-1 overflow-y-auto p-6 space-y-6 bg-[#0B0F17]",
+    "bento_dense": "grid grid-cols-1 md:grid-cols-12 gap-4 auto-rows-min",
+    "evidence_map_grid": "grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch"
+  },
+  "key_features_and_screens_design": {
+    "auth": {
+      "layout": "Centered dual-panel dark slate gateway with pilot enterprise selector and clearance status check",
+      "test_ids": ["login-email-input", "login-password-input", "login-submit-btn", "register-tab", "pilot-org-select"]
+    },
+    "career_profile": {
+      "layout": "Graph node summary + Track segmentation tabs (civilian / military / intellectual_property) with toggleable PROPOSED vs VERIFIED views",
+      "components": ["NodeTreeGraph", "TrackFilterBadges", "NodeVerificationModal", "ClaimEditorDrawer"],
+      "test_ids": ["profile-track-tab-civilian", "profile-track-tab-military", "profile-track-tab-ip", "verify-node-btn", "propose-node-btn"]
+    },
+    "resume_upload": {
+      "layout": "Drag-and-drop parser dropzone + live structured extraction inspector displaying confidence scores and extracted evidence nodes",
+      "components": ["PdfDropZone", "ExtractionReviewTable", "ConfidenceGauge"],
+      "test_ids": ["resume-upload-dropzone", "extraction-review-table", "confirm-extraction-btn"]
+    },
+    "opportunities": {
+      "layout": "Target Role/Org selector + Job Description analyzer breaking requirements into Tier 1 (Must-have) through Tier 4 (Nice-to-have)",
+      "components": ["JdInputPanel", "RequirementTierList", "OrgAlignmentRadar"],
+      "test_ids": ["opportunity-jd-textarea", "analyze-jd-btn", "requirement-tier-1-list"]
+    },
+    "evidence_map": {
+      "layout": "Centerpiece 5-column mapping matrix: Requirement -> Tier -> Evidence Matches -> Match Strength (%) -> Representation Weight + Gap Callouts ('No sufficient canonical evidence')",
+      "components": ["RequirementToEvidenceRow", "MatchStrengthBar", "EvidenceProvenanceCard", "CanonicalGapAlert"],
+      "test_ids": ["evidence-map-table", "evidence-gap-alert-item", "match-strength-indicator"]
+    },
+    "representation": {
+      "layout": "Generated Resume canvas with interactive per-claim hover tags linking directly to canonical evidence node provenance",
+      "components": ["ResumePaperPreview", "PerClaimTraceabilityBadge", "ExportPdfBtn"],
+      "test_ids": ["resume-preview-container", "claim-trace-badge", "export-resume-pdf-btn"]
+    },
+    "validation": {
+      "layout": "Resume Contract Quality Gate results dashboard showing automated pass/warn/fail policy checks before human signoff",
+      "components": ["ContractGateSummaryCard", "PolicyCheckRuleList", "HumanSignoffTrigger"],
+      "test_ids": ["validation-gate-status", "policy-rule-item", "approve-human-review-btn"]
+    },
+    "admin_pilot": {
+      "layout": "Pilot Lifecycle management dashboard with tenant usage, parsing queue stats, evidence coverage metrics, and system audit logs",
+      "components": ["PilotTenantMetrics", "SystemHealthIndicator", "AuditLogTable"],
+      "test_ids": ["admin-tenant-selector", "admin-usage-metrics", "trigger-reindex-btn"]
+    }
+  },
+  "image_urls": {
+    "executive_avatar_1": "https://images.unsplash.com/photo-1597677012542-ef144cff4a70?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwxfHxleGVjdXRpdmUlMjBwcm9maWxlJTIwcG9ydHJhaXQlMjBjb3Jwb3JhdGUlMjBoZWFkc2hvdHxlbnwwfHx8fDE3ODg0NTMyMDR8MA&ixlib=rb-4.1.0&q=85",
+    "executive_avatar_2": "https://images.unsplash.com/photo-1609371497456-3a55a205d5eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwyfHxleGVjdXRpdmUlMjBwcm9maWxlJTIwcG9ydHJhaXQlMjBjb3Jwb3JhdGUlMjBoZWFkc2hvdHxlbnwwfHx8fDE3ODg0NTMyMDR8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Strictly build using JavaScript (.js / .jsx) files as specified in project stack.",
+    "Add 'data-testid' to every interactive button, link, form input, tab, and key metric component.",
+    "Use 'sonner' for toast notifications (located in /app/frontend/src/components/ui/sonner.js or similar).",
+    "Never use fully transparent backgrounds on headers or overlays; use dark frosted glass 'bg-[#0E1420]/90 backdrop-blur-md border-b border-[#243044]'.",
+    "Ensure 'PROPOSED' nodes are clearly distinguished by amber dashed borders and 'VERIFIED' nodes by emerald solid borders.",
+    "Ensure the Evidence Map highlights missing canonical evidence with visible Coral/Red border gap boxes.",
+    "Keep typography high-density, sharp, and readable using IBM Plex Mono for badges/metrics and Plus Jakarta Sans for headers."
+  ]
+},
+overwrite: true,
+path: "/app/design_guidelines.json"
+}
