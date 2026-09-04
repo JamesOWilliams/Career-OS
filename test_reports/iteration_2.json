@@ -1,0 +1,50 @@
+{
+  "summary": "Regression-focused retest of the evidence-matching background-job fix. Updated /app/backend/tests/backend_test.py to treat /match as async (added _poll_match helper + 3 new regression tests: fast-return with status=running, match-status 404 for unknown opp, match-status 404 cross-user) and reran the full suite: 31/31 PASS. Frontend E2E golden path as admin completed end to end: login -> Career Profile shows seeded VERIFIED James nodes (USAA, CPS Energy) -> created Allstate Director of Product Management opportunity (15 tiered requirements) -> Run Evidence Matching switched to Evidence tab, showed the 'Retrieving verified evidence & scoring matches...' loading state while the background job ran, and rendered the populated Evidence Map in 19.1s with NO hang and NO 'origin webserver returns invalid' gateway error (TOTAL 15 / COVERED 9 / GAPS 6, 22 match-strength indicators, 6 gap callouts incl. Bachelor-degree-style requirements) -> Generate Resume produced representation with 12 per-claim CKN trace badges -> Run Validation returned 'Resume Contract: PASSED' with all 10 gates PASS. The previously reported false all-gap pre-match state is fixed (map is only set when matched:true; unmatched state now shows a neutral prompt).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/opportunities/{id}/match", "issue": "Job is launched with a bare asyncio.create_task and no task reference is retained; if the backend worker restarts mid-job the opportunity is left permanently in matching_status='running' with no timeout/stale-job recovery, and the frontend poller would spin for 6 minutes then report 'Matching timed out'. Consider a started_at timestamp + staleness check."},
+      {"endpoint": "POST /api/opportunities/{id}/match", "issue": "No guard against re-entrancy: clicking/POSTing twice while status=='running' starts a second concurrent job (the first job's inserts are not cancelled), which can duplicate or interleave evidence_matches writes."},
+      {"endpoint": "_match_one (server.py:336)", "issue": "Per-requirement AI failures are swallowed to suggestions=[] and the job still reports 'complete'; a partial/all-failed AI run is indistinguishable from a genuine all-gap result. Consider recording per-requirement failure count in the status payload."},
+      {"endpoint": "POST /api/auth/login", "issue": "STILL OPEN from iteration_1: no rate limiting / brute-force lockout (6 consecutive wrong passwords all return 401)."},
+      {"endpoint": "CORS middleware (server.py:647)", "issue": "STILL OPEN: allow_origins=os.environ.get('CORS_ORIGINS','*') with allow_credentials=True is an invalid/unsafe combo; require explicit origins with no wildcard fallback."},
+      {"endpoint": "POST /api/admin/pilots/{user_id}/enable|disable", "issue": "STILL OPEN: no ObjectId validation (500 on malformed id) and no 404 for unknown-but-valid id."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OpportunityDetail / loadAll", "issue": "Polling only exists inside the runMatch click handler. If the user reloads or navigates away while a matching job is running, loadAll never calls GET /match-status, so the Evidence tab shows the neutral 'Run Evidence Matching to build the map' prompt with no indication a job is in flight; clicking again starts a duplicate job. Fix: check match-status on mount and resume polling when status==='running'.", "selector": "[data-testid=\"run-matching-btn\"]", "priority": "MEDIUM"},
+      {"component": "OpportunityDetail / runMatch", "issue": "First status poll is delayed by 3s after the POST (sleep-then-poll), so a fast/cached job still shows the spinner for a minimum of 3s. Minor; poll immediately then back off.", "selector": "[data-testid=\"run-matching-btn\"]", "priority": "LOW"},
+      {"component": "Admin.jsx invite modal", "issue": "STILL OPEN from iteration_1 (not retested this round): modal cannot be dismissed via Escape/backdrop and the overlay intercepts sidebar nav clicks.", "selector": "[data-testid=\"invite-pilot-btn\"] modal overlay", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Opportunity detail load", "issue": "STILL OPEN: representation and validation are fetched unconditionally on mount, logging 4x 404 'Failed to load resource' console errors before generation/validation exist. Harmless but noisy.", "affected_selectors": ["[data-testid=\"tab-representation\"]", "[data-testid=\"tab-validation\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Evidence Map", "issues": ["Provenance rationale text (text-slate-500 italic on #0B0F17) is ~3:1 contrast — below WCAG AA for body text; same for the 'TOTAL 15' meta labels."]},
+      {"screen": "Opportunity detail header", "issues": ["Success toast (top-right) still overlaps the 'Back' link, briefly making it unclickable."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "PRIMARY REGRESSION VERIFIED FIXED — no action needed: /match returns <1s with status=running, match-status goes running->complete in ~19s, evidence-map then returns matched:true with populated rows; no gateway timeout in API or UI.",
+    "Resume polling on mount when match-status==='running' (currently a page reload loses the job's UI state) and block a second /match while one is running.",
+    "Surface per-requirement AI failure counts so a failed AI run is not reported as a legitimate all-gap result.",
+    "Carry-over from iteration_1: admin invite modal Escape/backdrop close; ObjectId validation + 404 on /admin/pilots/{id}/enable|disable; login throttling; remove '*' CORS fallback with allow_credentials=True."
+  ],
+  "critical_code_review_comments": [
+    "Background-job design is correct for the gateway-timeout fix: status is persisted on the opportunity document (survives the request), stale matches are deleted before the job starts, and asyncio.Semaphore(5) bounds AI concurrency. Matching semantics are unchanged — verified-only retrieval, match_strength in [0,1] sorted desc, top match always 'primary', weights within {primary,supporting,contextual,chronology} (all asserted and passing).",
+    "asyncio.create_task's return value is discarded — Python can garbage-collect a task with no strong reference; keep a module-level set of running tasks with a done-callback to be safe.",
+    "evidence_map's new 'matched' flag cleanly resolves the iteration_1 false-all-gap bug; frontend correctly gates on m.data.matched.",
+    "server.py is now 651 lines — still under but close to the 700-line split threshold; split auth/career/opportunity/admin routers.",
+    "@app.on_event('startup') remains deprecated — migrate to the lifespan context manager."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% of golden-path steps passed"},
+  "seed_data_creation": "pytest created TEST_*@example.com users/nodes/opportunities; frontend E2E created one admin-owned Allstate opportunity (6a9a110aef1df4e6d5711b7a) with matches, representation and validation.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "willsky.james@gmail.com / CareerOS2026! (admin) — valid and working",
+  "context_for_next_testing_agent": "backend_test.py now has _poll_match(client, opp_id) — ALWAYS poll GET /opportunities/{id}/match-status until 'complete' before asserting evidence-map/generate/validate; POST /match only returns {status:running}. Suite is 31 tests, runs under pytest.ini's -n 2 --dist loadscope in ~55s. Frontend runMatch polls every 3s; matching takes 15-25s for 15 requirements so use a 180s wait_for_selector on [data-testid=\"evidence-map-table\"]. Untested this round: resume upload/ingestion flow and Admin page UI (carry-over iteration_1 issues).",
+  "rca_of_the_issue": "Original UAT failure: POST /match made one AI call per requirement serially inside the HTTP request (~15 calls), exceeding the ingress gateway timeout -> 'origin webserver returns invalid'. Fix moves the work into an asyncio background task with Semaphore(5) concurrency and persists matching_status on the opportunity, so the HTTP request returns in ~0.02-1s and the client polls /match-status. Verified by measurement: POST returned in <10s asserted (actual sub-second), status transitioned running->complete, evidence-map matched:true with 15 rows / 9 covered / 6 gaps; UI rendered the map after 19.1s with no error."
+}

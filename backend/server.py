@@ -3,6 +3,7 @@ Match Evidence -> Generate -> Validate -> Review. AI proposes; humans verify; co
 """
 import os
 import re
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -299,27 +300,44 @@ async def reanalyze(opp_id: str, user: dict = Depends(get_current_user)):
 
 
 # =========================== EVIDENCE MATCHING PIPELINE ===========================
+_match_tasks: set = set()  # keep strong refs so background jobs aren't garbage-collected
+
+
 @api.post("/opportunities/{opp_id}/match")
 async def run_matching(opp_id: str, user: dict = Depends(get_current_user)):
+    """Launch evidence matching as a background job and return immediately.
+
+    Per-requirement AI suggestion calls, run inline, take longer than the ingress
+    gateway timeout and cause 'origin webserver returns invalid'. The job runs in the
+    background (with bounded concurrency); the client polls GET .../match-status.
+    Matching SEMANTICS are unchanged (verified-only retrieval, relevance->strength->
+    differentiation->recency scoring, deterministic weighting).
+    """
     opp_repo = OwnedRepo("opportunities", user["id"])
     opp = await opp_repo.get(opp_id)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
     node_repo = OwnedRepo("career_knowledge", user["id"])
-    verified = [ser_keep(n) for n in await node_repo.find({"state": "VERIFIED"})]
-    if not verified:
+    if not await node_repo.count({"state": "VERIFIED"}):
         raise HTTPException(status_code=409, detail="No VERIFIED canonical evidence available")
 
-    req_repo = OwnedRepo("requirements", user["id"])
-    requirements = await req_repo.find({"opportunity_id": opp_id})
-    nodes_by_id = {n["node_id"]: n for n in verified}
+    if opp.get("matching_status") == "running":
+        return {"status": "running"}  # idempotent: don't start a duplicate job
 
+    await opp_repo.update(opp_id, {"matching_status": "running", "matching_error": None})
     match_repo = OwnedRepo("evidence_matches", user["id"])
     for m in await match_repo.find({"opportunity_id": opp_id}):
         await match_repo.delete(str(m["_id"]))
 
-    for req in requirements:
+    task = asyncio.create_task(_run_matching_job(user["id"], opp_id))
+    _match_tasks.add(task)
+    task.add_done_callback(_match_tasks.discard)
+    return {"status": "running"}
+
+
+async def _match_one(req, verified, nodes_by_id, sem):
+    async with sem:
         req_id = str(req["_id"])
         req_public = {**req, "id": req_id}
         try:
@@ -341,13 +359,39 @@ async def run_matching(opp_id: str, user: dict = Depends(get_current_user)):
             })
         scored.sort(key=lambda x: x["match_strength"], reverse=True)
         weighted, _ = pipeline.assign_weights(scored)
-        for w in weighted:
-            if w["match_status"] != "matched":
-                continue
-            await match_repo.insert({
-                "opportunity_id": opp_id, **w, "created_at": now_iso(),
-            })
-    return {"matched": True}
+        return [w for w in weighted if w["match_status"] == "matched"]
+
+
+async def _run_matching_job(owner_id, opp_id):
+    opp_repo = OwnedRepo("opportunities", owner_id)
+    try:
+        node_repo = OwnedRepo("career_knowledge", owner_id)
+        verified = [ser_keep(n) for n in await node_repo.find({"state": "VERIFIED"})]
+        nodes_by_id = {n["node_id"]: n for n in verified}
+        req_repo = OwnedRepo("requirements", owner_id)
+        requirements = await req_repo.find({"opportunity_id": opp_id})
+        match_repo = OwnedRepo("evidence_matches", owner_id)
+
+        sem = asyncio.Semaphore(5)
+        results = await asyncio.gather(
+            *[_match_one(r, verified, nodes_by_id, sem) for r in requirements]
+        )
+        for matched in results:
+            for w in matched:
+                await match_repo.insert({"opportunity_id": opp_id, **w, "created_at": now_iso()})
+        await opp_repo.update(opp_id, {"matching_status": "complete", "matching_error": None})
+    except Exception as e:
+        logger.exception("matching job failed")
+        await opp_repo.update(opp_id, {"matching_status": "error", "matching_error": str(e)})
+
+
+@api.get("/opportunities/{opp_id}/match-status")
+async def match_status(opp_id: str, user: dict = Depends(get_current_user)):
+    repo = OwnedRepo("opportunities", user["id"])
+    opp = await repo.get(opp_id)
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return {"status": opp.get("matching_status", "idle"), "error": opp.get("matching_error")}
 
 
 def ser_keep(doc):

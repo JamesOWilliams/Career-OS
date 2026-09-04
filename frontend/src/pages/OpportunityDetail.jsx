@@ -32,6 +32,27 @@ export default function OpportunityDetail() {
     setData(data);
   }, [id]);
 
+  const pollMatching = useCallback(async () => {
+    setBusy("match");
+    try {
+      let status = "running";
+      for (let i = 0; i < 120 && status === "running"; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const { data: st } = await client.get(`/opportunities/${id}/match-status`);
+        status = st.status;
+        if (status === "error") throw new Error(st.error || "Matching failed");
+      }
+      if (status !== "complete") throw new Error("Matching timed out");
+      const m = await client.get(`/opportunities/${id}/evidence-map`);
+      setMap(m.data);
+      toast.success("Evidence matching complete");
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail) || e.message);
+    } finally {
+      setBusy("");
+    }
+  }, [id]);
+
   const loadAll = useCallback(async () => {
     await loadOpp();
     try {
@@ -46,7 +67,15 @@ export default function OpportunityDetail() {
       const v = await client.get(`/opportunities/${id}/validation`);
       setValidation(v.data);
     } catch {}
-  }, [id, loadOpp]);
+    // Resume UI state if a matching job is already running (e.g. after a page reload).
+    try {
+      const st = await client.get(`/opportunities/${id}/match-status`);
+      if (st.data.status === "running") {
+        setTab("evidence");
+        pollMatching();
+      }
+    } catch {}
+  }, [id, loadOpp, pollMatching]);
 
   useEffect(() => {
     loadAll();
@@ -54,17 +83,16 @@ export default function OpportunityDetail() {
 
   const runMatch = async () => {
     setBusy("match");
+    setTab("evidence");
     try {
       await client.post(`/opportunities/${id}/match`);
-      const m = await client.get(`/opportunities/${id}/evidence-map`);
-      setMap(m.data);
-      toast.success("Evidence matching complete");
-      setTab("evidence");
     } catch (e) {
-      toast.error(formatError(e.response?.data?.detail));
-    } finally {
       setBusy("");
+      toast.error(formatError(e.response?.data?.detail) || e.message);
+      return;
     }
+    // Matching runs as a background job; poll status to avoid a long-lived request.
+    await pollMatching();
   };
 
   const runGenerate = async () => {

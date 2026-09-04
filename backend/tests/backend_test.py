@@ -49,6 +49,22 @@ def admin_creds():
     return {"email": email.group(1), "password": pwd.group(1)}
 
 
+def _poll_match(client, opp_id, timeout=240):
+    """Poll GET /match-status until it leaves 'running' (matching is a background job)."""
+    deadline = time.time() + timeout
+    status = "running"
+    while time.time() < deadline:
+        r = client.get(f"{API}/opportunities/{opp_id}/match-status", timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        status = body["status"]
+        if status in ("complete", "error"):
+            assert status == "complete", f"matching errored: {body.get('error')}"
+            return status
+        time.sleep(3)
+    return f"timeout(last={status})"
+
+
 def _client(token=None):
     s = requests.Session()
     s.headers.update({"Content-Type": "application/json"})
@@ -335,12 +351,38 @@ class TestGoldenPath:
         assert len(cats) >= 3, cats
         assert reqs == sorted(reqs, key=lambda x: x["tier"])
 
-    def test_matching_and_evidence_map(self, admin, golden_opp):
-        r = admin.post(f"{API}/opportunities/{golden_opp}/match", timeout=LONG * 3)
+    def test_matching_is_background_job_and_returns_immediately(self, admin, golden_opp):
+        """REGRESSION: /match must return fast (no gateway timeout) with status running."""
+        t0 = time.time()
+        r = admin.post(f"{API}/opportunities/{golden_opp}/match", timeout=30)
+        elapsed = time.time() - t0
         assert r.status_code == 200, r.text
+        assert r.json()["status"] == "running", r.text
+        assert elapsed < 10, f"/match took {elapsed:.1f}s — still running inline"
+
+        # evidence-map must advertise not-yet-matched while running
+        em = admin.get(f"{API}/opportunities/{golden_opp}/evidence-map", timeout=60)
+        assert em.status_code == 200
+        assert "matched" in em.json()
+
+        status = _poll_match(admin, golden_opp)
+        assert status == "complete", status
+
+    def test_match_status_unknown_opp_404(self, admin):
+        r = admin.get(f"{API}/opportunities/64b7f9f9f9f9f9f9f9f9f9f9/match-status", timeout=30)
+        assert r.status_code == 404
+
+    def test_match_status_cross_user_404(self, user_b, golden_opp):
+        r = user_b["c"].get(f"{API}/opportunities/{golden_opp}/match-status", timeout=30)
+        assert r.status_code == 404
+
+    def test_matching_and_evidence_map(self, admin, golden_opp):
+        status = _poll_match(admin, golden_opp)
+        assert status == "complete", status
         em = admin.get(f"{API}/opportunities/{golden_opp}/evidence-map", timeout=90)
         assert em.status_code == 200, em.text
         data = em.json()
+        assert data["matched"] is True, data.get("summary")
         rows = data["rows"]
         assert len(rows) == data["summary"]["total"] >= 8
         covered = [row for row in rows if not row["gap"]]
