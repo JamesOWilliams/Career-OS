@@ -459,6 +459,55 @@ def _end_year(end):
     return yrs[0] if yrs else 0
 
 
+def assemble_sections(gen, nodes, used_node_ids):
+    """Deterministically assemble resume sections from matched VERIFIED nodes.
+
+    Tolerant of malformed LLM output: a non-dict `gen`, non-dict experience entries,
+    or non-dict/empty bullets are ignored, and the node falls back to its canonical
+    evidence. Never invents claims — every rendered bullet traces to a verified node.
+    """
+    if not isinstance(gen, dict):
+        gen = {}
+    gen_exp = {}
+    for e in gen.get("experiences", []) or []:
+        if isinstance(e, dict) and e.get("node_id"):
+            gen_exp[e["node_id"]] = e
+    experiences = []
+    claim_prov = []
+    for nid in used_node_ids:
+        node = nodes.get(nid)
+        if not node:
+            continue
+        ident = node["identity"]
+        # IP is never rendered as employment
+        employer = "" if node["track"] == "intellectual_property" else ident.get("employer", "")
+        bullets = []
+        for b in gen_exp.get(nid, {}).get("bullets", []) or []:
+            if not isinstance(b, dict):
+                continue
+            text = (b.get("text") or "").strip()
+            if not text:
+                continue
+            bullets.append({"text": text, "source_node_id": nid})
+            claim_prov.append({"text": text, "node_id": nid})
+        if not bullets:
+            # fall back to canonical evidence directly (still verified; no invention)
+            for ev in node["evidence"][:3]:
+                bullets.append({"text": ev, "source_node_id": nid})
+                claim_prov.append({"text": ev, "node_id": nid})
+        experiences.append({
+            "node_id": nid, "employer": employer, "role": ident.get("role", ""),
+            "organization": ident.get("organization", ""), "client": ident.get("client", ""),
+            "track": node["track"], "start": ident.get("start", ""), "end": ident.get("end", ""),
+            "bullets": bullets,
+        })
+    experiences.sort(key=lambda e: _end_year(e["end"]), reverse=True)
+    summary = gen.get("summary", "")
+    if not isinstance(summary, str):
+        summary = ""
+    return {"summary": summary, "experiences": experiences}, claim_prov
+
+
 @api.post("/opportunities/{opp_id}/generate")
 async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
     opp_repo = OwnedRepo("opportunities", user["id"])
@@ -496,36 +545,8 @@ async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
         logger.exception("generation failed")
         raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
 
-    # Build sections deterministically; enforce reverse-chronological order.
-    gen_exp = {e.get("node_id"): e for e in gen.get("experiences", [])}
-    experiences = []
-    claim_prov = []
-    for nid in used_node_ids:
-        node = nodes.get(nid)
-        if not node:
-            continue
-        ident = node["identity"]
-        # IP is never rendered as employment
-        employer = "" if node["track"] == "intellectual_property" else ident.get("employer", "")
-        bullets = []
-        for b in gen_exp.get(nid, {}).get("bullets", []):
-            text = b.get("text", "")
-            bullets.append({"text": text, "source_node_id": nid})
-            claim_prov.append({"text": text, "node_id": nid})
-        if not bullets:
-            # fall back to canonical evidence directly (still verified)
-            for ev in node["evidence"][:3]:
-                bullets.append({"text": ev, "source_node_id": nid})
-                claim_prov.append({"text": ev, "node_id": nid})
-        experiences.append({
-            "node_id": nid, "employer": employer, "role": ident.get("role", ""),
-            "organization": ident.get("organization", ""), "client": ident.get("client", ""),
-            "track": node["track"], "start": ident.get("start", ""), "end": ident.get("end", ""),
-            "bullets": bullets,
-        })
-    experiences.sort(key=lambda e: _end_year(e["end"]), reverse=True)
-
-    sections = {"summary": gen.get("summary", ""), "experiences": experiences}
+    # Deterministic, malformed-output-tolerant assembly (reverse-chronological, verified-only).
+    sections, claim_prov = assemble_sections(gen, nodes, used_node_ids)
     rep_repo = OwnedRepo("representations", user["id"])
     for r in await rep_repo.find({"opportunity_id": opp_id}):
         await rep_repo.delete(str(r["_id"]))

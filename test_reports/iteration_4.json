@@ -1,0 +1,35 @@
+{
+  "summary": "Independent verification of the BOUNDED presentation remediation (no canonical data changes). Backend: updated /app/backend/tests/backend_test.py — rewrote PDF+DOCX assertions to require ABSENCE of 'CKN-', 'Contract v', 'Resume Template v', 'traceable claim', and 'Target:' (all four forbidden strings); kept chronology/headline/metric/client assertions; added test_representation_still_has_claim_provenance_with_node_ids (asserts cp length == total bullets, every node_id starts 'CKN-') and test_heading_helper_handles_empty_role (unit calls resume_export._heading with role='' + IP track -> 'X'; role='' + employer='' -> ''; Speaker+Regional Cloud Meetup -> 'Speaker — Regional Cloud Meetup'; no result starts with em-dash). Full pytest suite: 40/40 PASS in 52.9s on live preview URL (REACT_APP_BACKEND_URL). Direct curl re-verified against the UI-created opp 6acd648ea6a93d937300932f: PDF (3727B, application/pdf, %PDF-) and DOCX (37973B, OOXML, PK) BOTH contain NO 'CKN-', NO 'Contract v', NO 'Resume Template v', NO 'traceable claim', NO 'Target:'; content intact (USAA '52 APIs' metric via regex r'52\\s+\\S*\\s*APIs?' present in both; Speaker + Regional Cloud Meetup present; USAA present). GET /representation still returns claim_provenance with 12 entries, all with node_id starting 'CKN-', one per bullet. Frontend E2E: login as admin, created fresh Allstate Director of Product Management opp, Run Evidence Matching (background job -> evidence-map-table in 12s), Generate Resume (12 claim-trace-badges in 12s), clicked Representation tab, confirmed inline CKN count = 0 (raw IDs hidden), clicked first claim-trace-badge -> evidence-provenance-popover rendered with 'Node ID: CKN-CIV-CPS-001', 'Verified source: Senior Software Engineer · CPS Energy', 'VERIFIED canonical node'; 5 experience headings all well-formed (none start with em-dash); export-resume-pdf-btn and export-resume-docx-btn both fire real downloads (200, correct content-types, correct magic bytes). yarn production build: clean (Done in 26.26s, no errors or warnings beyond CRA baseline). Regression: auth (incl. bcrypt format + brute force lockout test), node lifecycle, cross-user isolation (user B export -> 404, no-token -> 401), background matching job, 10/10 validation gates all PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/opportunities/{id}/generate", "issue": "Observed one intermittent 500 'AttributeError: list object has no attribute get' at server.py:500 — happens when LLM returns gen['experiences'] containing a non-dict item. Retrying generate succeeded immediately. Pre-existing LLM-robustness gap, not caused by this remediation. Suggest: filter non-dict entries: `{e['node_id']: e for e in gen.get('experiences',[]) if isinstance(e, dict) and e.get('node_id')}`."},
+      {"endpoint": "GET /api/opportunities/{id}/export (PDF)", "issue": "Carry-over from iteration_3: reportlab ListFlowable bullet glyph still extracts as (cid:127) in pdfminer. Cosmetic only — bullet text extracts cleanly."},
+      {"endpoint": "POST /api/auth/login", "issue": "Carry-over: no brute-force lockout (test_repeated_failures_lockout passes only because it tolerates both 401/429)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Harden generate_resume against LLM returning non-dict items in 'experiences' (one-line isinstance guard at server.py:500).",
+    "No blocking action for the remediation itself — exports are provably stripped of CKN/Contract footer/Target line, Evidence popover works, empty-role heading fix verified by unit + UI, provenance data preserved."
+  ],
+  "critical_code_review_comments": [
+    "resume_export._heading() correctly filters empty parts before joining with ' — ', so IP entries with only organization render cleanly and would-be empty experiences render as '' (no dangling separator). Guarded in build_pdf by `if heading:` so no empty Paragraph is emitted.",
+    "build_pdf and build_docx both stop at experiences; no footer/Target block remains — matches the review scope.",
+    "OpportunityDetail.jsx EvidenceIndicator correctly places CKN id only inside PopoverContent (data-testid 'evidence-provenance-popover'); inline chip ('claim-trace-badge') shows only an 'EVIDENCE' label. Representation heading has empty-role fallback that collapses to the org/employer alone.",
+    "server.py:500 is not defensive against malformed LLM output (dict vs list items) — a one-liner isinstance guard would make generation idempotent on retry."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (40/40)", "frontend": "100% (full E2E incl. evidence popover + both exports + yarn build)"},
+  "test_credentials": "willsky.james@gmail.com / CareerOS2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created UI opp 6acd648ea6a93d937300932f (Allstate / Director of Product Management) during E2E; used seeded admin KB (5 VERIFIED James nodes).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 40 tests. Export assertions now REQUIRE absence of CKN-/Contract v/Resume Template v/Target:/traceable claim; keep this inversion in mind — adding them back would re-break the suite. New test_heading_helper_handles_empty_role imports resume_export directly via sys.path.insert('/app/backend'), make sure that is retained. For UI testing: login redirects to /profile not /opportunities (prior fixture assumed otherwise); use goto('/opportunities') after login. Dialog field testids are opportunity-role-input / opportunity-org-input / opportunity-jd-textarea / analyze-jd-btn (NOT opp-* variants). Generate can intermittently 500 due to LLM output shape — retry once if claim-trace-badges don't appear within ~30s.",
+  "rca_of_the_issue": "No remediation defect found. One pre-existing LLM-robustness bug surfaced during E2E (generate_resume 500 on malformed experiences list); unrelated to the presentation changes and recovered on retry."
+}

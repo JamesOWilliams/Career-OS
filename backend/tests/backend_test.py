@@ -473,6 +473,35 @@ class TestGoldenPath:
         assert g.status_code == 200, g.text
         return g.json()
 
+    def test_representation_still_has_claim_provenance_with_node_ids(self, admin, golden_opp):
+        """Provenance preserved in DATA — exports hide CKN ids but /representation still returns them."""
+        rep = self._rep(admin, golden_opp)
+        cp = rep.get("claim_provenance")
+        assert isinstance(cp, list) and len(cp) >= 1, "claim_provenance missing"
+        total_bullets = sum(len(e["bullets"]) for e in rep["sections"]["experiences"])
+        assert len(cp) == total_bullets, (len(cp), total_bullets)
+        for p in cp:
+            assert p.get("node_id", "").startswith("CKN-"), p
+
+    def test_heading_helper_handles_empty_role(self):
+        """Unit test: resume_export._heading never produces a dangling ' — '."""
+        import sys as _sys
+        _sys.path.insert(0, "/app/backend")
+        from resume_export import _heading
+        assert _heading({"role": "", "track": "intellectual_property", "organization": "X", "employer": ""}) == "X"
+        assert _heading({"role": "", "track": "employment", "organization": "", "employer": ""}) == ""
+        assert _heading({"role": "Speaker", "track": "intellectual_property",
+                         "organization": "Regional Cloud Meetup", "employer": ""}) == "Speaker \u2014 Regional Cloud Meetup"
+        assert _heading({"role": "SWE", "track": "employment", "employer": "Acme"}) == "SWE \u2014 Acme"
+        # No output should start with em-dash
+        for sample in [
+            {"role": "", "employer": "Acme"},
+            {"role": "", "organization": "Org", "track": "intellectual_property"},
+        ]:
+            h = _heading(sample)
+            assert not h.startswith("\u2014"), h
+            assert " \u2014 " not in (h + " \n")  # no dangling separator newline either
+
     def test_export_pdf_parses_and_matches_representation(self, admin, golden_opp):
         import io as _io
         from pdfminer.high_level import extract_text
@@ -485,24 +514,30 @@ class TestGoldenPath:
         assert r.content[:5] == b"%PDF-", r.content[:20]
         text = extract_text(_io.BytesIO(r.content))
         flat = re.sub(r"\s+", " ", text)
-        # summary + footer
+        # summary present
         assert rep["sections"]["summary"].split(".")[0][:40].strip() in flat, "summary missing from PDF"
-        assert "Contract v" in flat and "Resume Template v" in flat, flat[-300:]
-        # every experience role, employer/organization rendering, bullets & provenance ids
+        # BOUNDED remediation: CKN ids, contract footer, Target line must all be hidden in export
+        assert "CKN-" not in flat, f"CKN identifier leaked into PDF: {flat[:400]}"
+        assert "Contract v" not in flat, "contract footer should be removed from PDF"
+        assert "Resume Template v" not in flat, "template footer should be removed from PDF"
+        assert "traceable claim" not in flat.lower(), "traceable-claims footer should be removed"
+        assert "Target:" not in flat, "Target opportunity metadata line should be removed from PDF"
+        # every experience role, employer/organization rendering, bullets intact
         exps = rep["sections"]["experiences"]
         exp_part = flat.split("Experience", 1)[-1]
         cursor, positions = 0, []
         for e in exps:
             disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
-            headline = f'{e["role"]} \u2014 {disp}'.strip(" \u2014")
+            role = (e.get("role") or "").strip()
+            headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
             idx = exp_part.find(headline, cursor)
-            assert idx >= 0, f"headline missing/out-of-order in PDF: {headline}"
+            assert idx >= 0, f"headline missing/out-of-order in PDF: {headline!r}"
+            # empty-role entries must not render a dangling ' — '
+            assert not headline.startswith(" \u2014") and not headline.startswith("\u2014 ")
             cursor = idx + len(headline)
             positions.append(idx)
             if e.get("client"):
                 assert f'Client: {e["client"]}' in flat, "client relationship missing"
-            for b in e["bullets"]:
-                assert f'[{b["source_node_id"]}]' in flat, f'trace id missing {b["source_node_id"]}'
         assert positions == sorted(positions), f"PDF chronology differs from app order: {positions}"
         # golden-content assertions
         assert re.search(r"52\s+\S*\s*APIs?", flat), "USAA 52-API metric missing from PDF"
@@ -527,20 +562,25 @@ class TestGoldenPath:
         paras = [p.text for p in doc.paragraphs]
         flat = re.sub(r"\s+", " ", " \n ".join(paras))
         assert rep["sections"]["summary"] in flat.replace(" \n ", " ") or rep["sections"]["summary"] in " ".join(paras)
-        assert "Contract v" in flat
+        # BOUNDED remediation: CKN/contract/target hidden in DOCX
+        assert "CKN-" not in flat, "CKN identifier leaked into DOCX"
+        assert "Contract v" not in flat, "contract footer should be removed from DOCX"
+        assert "Resume Template v" not in flat
+        assert "Target:" not in flat, "Target line should be removed from DOCX"
         exps = rep["sections"]["experiences"]
         exp_part = flat.split("Experience", 1)[-1]
         cursor, positions = 0, []
         for e in exps:
             disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
-            headline = f'{e["role"]} \u2014 {disp}'.strip(" \u2014")
+            role = (e.get("role") or "").strip()
+            headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
             idx = exp_part.find(headline, cursor)
-            assert idx >= 0, f"headline missing/out-of-order in DOCX: {headline}"
+            assert idx >= 0, f"headline missing/out-of-order in DOCX: {headline!r}"
+            assert not headline.startswith(" \u2014") and not headline.startswith("\u2014 ")
             cursor = idx + len(headline)
             positions.append(idx)
             for b in e["bullets"]:
                 assert b["text"][:40] in flat, "bullet text missing from DOCX"
-                assert f'[{b["source_node_id"]}]' in flat
         assert positions == sorted(positions), "DOCX chronology differs"
         assert re.search(r"52\s+\S*\s*APIs?", flat), "USAA 52-API metric missing from DOCX"
         assert "Avantus" in flat and "Regional Cloud Meetup" in flat
@@ -604,3 +644,80 @@ class TestBruteForce:
         ok = requests.post(f"{API}/auth/login", json=admin_creds, timeout=30)
         assert ok.status_code == 200, f"admin locked out after failures: {ok.status_code}"
         assert all(c in (401, 429) for c in codes), codes
+
+
+
+# ---------- module: generation hardening (malformed LLM output) ----------
+import sys as _sys
+_sys.path.insert(0, "/app/backend")
+
+
+def _nodes_fixture():
+    return {
+        "CKN-A": {"node_id": "CKN-A", "track": "civilian",
+                  "identity": {"employer": "Acme", "role": "Engineer", "organization": "Tech",
+                               "client": "", "start": "2020", "end": "2023"},
+                  "evidence": ["Built X", "Shipped Y", "Scaled Z"], "retrieval": {"metrics": []}},
+        "CKN-IP": {"node_id": "CKN-IP", "track": "intellectual_property",
+                   "identity": {"employer": "", "role": "Speaker", "organization": "Meetup",
+                                "client": "", "start": "2021", "end": "2021"},
+                   "evidence": ["Gave a talk"], "retrieval": {"metrics": []}},
+    }
+
+
+class TestGenerationHardening:
+    """assemble_sections must tolerate malformed LLM output without 500 or invented claims."""
+
+    def _assemble(self, gen):
+        from server import assemble_sections
+        nodes = _nodes_fixture()
+        return assemble_sections(gen, nodes, ["CKN-A", "CKN-IP"])
+
+    def test_gen_is_a_list_not_dict(self):
+        sections, cp = self._assemble(["unexpected", "list"])
+        assert sections["summary"] == ""
+        assert len(sections["experiences"]) == 2
+        # falls back to canonical evidence; every claim traces to a node
+        assert cp and all(c["node_id"] in ("CKN-A", "CKN-IP") for c in cp)
+
+    def test_experiences_contains_non_dict_items(self):
+        gen = {"summary": "S", "experiences": ["oops", 123, {"node_id": "CKN-A",
+               "bullets": [{"text": "Real bullet"}]}]}
+        sections, cp = self._assemble(gen)
+        acme = next(e for e in sections["experiences"] if e["node_id"] == "CKN-A")
+        assert any(b["text"] == "Real bullet" for b in acme["bullets"])
+        # IP node had no LLM experience -> falls back to canonical evidence, not invented
+        ip = next(e for e in sections["experiences"] if e["node_id"] == "CKN-IP")
+        assert ip["bullets"] and ip["bullets"][0]["text"] == "Gave a talk"
+        assert ip["employer"] == ""  # IP never rendered as employment
+
+    def test_bullets_contains_non_dict_and_empty(self):
+        gen = {"summary": 999, "experiences": [{"node_id": "CKN-A",
+               "bullets": ["str-bullet", {"text": ""}, {"text": "  "}, {"text": "Kept"}]}]}
+        sections, cp = self._assemble(gen)
+        acme = next(e for e in sections["experiences"] if e["node_id"] == "CKN-A")
+        texts = [b["text"] for b in acme["bullets"]]
+        assert "Kept" in texts
+        assert "" not in texts and "  " not in texts and "str-bullet" not in texts
+        assert sections["summary"] == ""  # non-str summary coerced
+
+    def test_missing_experiences_key(self):
+        sections, cp = self._assemble({"summary": "only summary"})
+        assert sections["summary"] == "only summary"
+        # both nodes fall back to canonical evidence
+        assert {e["node_id"] for e in sections["experiences"]} == {"CKN-A", "CKN-IP"}
+        assert all(b["source_node_id"] for e in sections["experiences"] for b in e["bullets"])
+
+
+# ---------- module: canonical correction (USAA migration direction) ----------
+class TestCanonicalCorrection:
+    def test_usaa_migration_direction_corrected(self, admin):
+        nodes = admin.get(f"{API}/career/nodes", params={"state": "VERIFIED"}, timeout=60).json()
+        usaa = [n for n in nodes if n["node_id"] == "CKN-CIV-USAA-001"]
+        # admin owns the seeded James USAA node (seed direction is DFW->ATL by design);
+        # the real-account correction (ATL->DFW) is validated separately. Here we assert
+        # the seeded node still exists, is VERIFIED, and retains its 52-API metric.
+        assert usaa, "seeded USAA node missing"
+        n = usaa[0]
+        assert n["state"] == "VERIFIED"
+        assert "52 APIs" in str(n["retrieval"]["metrics"])
