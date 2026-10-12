@@ -23,6 +23,16 @@ def _meta_line(exp: dict) -> str:
     return dates
 
 
+def _heading(exp: dict) -> str:
+    """Role — Employer/Org, skipping empty parts so there is no dangling separator.
+
+    Never invents a missing role title.
+    """
+    emp = _display_employer(exp) or exp.get("organization", "") or ""
+    parts = [p for p in (exp.get("role", "").strip(), emp.strip()) if p]
+    return " — ".join(parts)
+
+
 def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
     from docx import Document
     from docx.shared import Pt, RGBColor
@@ -31,10 +41,6 @@ def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
     doc = Document()
 
     doc.add_heading(target_role or "Resume", level=0)
-    if organization:
-        p = doc.add_paragraph()
-        r = p.add_run(f"Target: {organization}")
-        r.italic = True
 
     if sections.get("summary"):
         doc.add_heading("Professional Summary", level=1)
@@ -42,9 +48,8 @@ def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
 
     doc.add_heading("Experience", level=1)
     for e in sections.get("experiences", []):
-        emp = _display_employer(e)
         title_p = doc.add_paragraph()
-        title_r = title_p.add_run(f'{e.get("role", "")} — {emp}'.strip(" —"))
+        title_r = title_p.add_run(_heading(e))
         title_r.bold = True
         meta_p = doc.add_paragraph()
         meta_r = meta_p.add_run(_meta_line(e))
@@ -54,19 +59,6 @@ def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
         for b in e.get("bullets", []):
             bp = doc.add_paragraph(style="List Bullet")
             bp.add_run(b.get("text", ""))
-            tag = bp.add_run(f'  [{b.get("source_node_id", "")}]')
-            tag.font.size = Pt(7)
-            tag.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-
-    foot = doc.add_paragraph()
-    fr = foot.add_run(
-        f'Resume Template v{rep.get("template_version", "1.0")} · '
-        f'Contract v{rep.get("contract_version", "1.0")} · '
-        f'{len(rep.get("claim_provenance", []))} traceable claims'
-    )
-    fr.font.size = Pt(7)
-    fr.italic = True
-    fr.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -105,8 +97,6 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
                           textColor=HexColor("#888888"), spaceBefore=10)
 
     story = [Paragraph(escape(target_role or "Resume"), name)]
-    if organization:
-        story.append(Paragraph(f"Target: {escape(organization)}", target))
     story.append(HRFlowable(width="100%", thickness=0.6, color=HexColor("#CCCCCC")))
 
     if sections.get("summary"):
@@ -115,27 +105,16 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
 
     story.append(Paragraph("Experience", sec))
     for e in sections.get("experiences", []):
-        emp = _display_employer(e)
-        story.append(Paragraph(f'<b>{escape(e.get("role",""))}</b> — {escape(emp)}', role))
+        heading = _heading(e)
+        if heading:
+            story.append(Paragraph(f'<b>{escape(heading)}</b>', role))
         story.append(Paragraph(escape(_meta_line(e)), meta))
         items = []
         for b in e.get("bullets", []):
-            txt = (
-                f'{escape(b.get("text",""))} '
-                f'<font size=7 color="#888888">[{escape(b.get("source_node_id",""))}]</font>'
-            )
-            items.append(ListItem(Paragraph(txt, bullet), leftIndent=12))
+            items.append(ListItem(Paragraph(escape(b.get("text", "")), bullet), leftIndent=12))
         if items:
             story.append(ListFlowable(items, bulletType="bullet", start="•", leftIndent=10))
         story.append(Spacer(1, 5))
-
-    story.append(HRFlowable(width="100%", thickness=0.4, color=HexColor("#DDDDDD")))
-    story.append(Paragraph(
-        f'Resume Template v{rep.get("template_version","1.0")} · '
-        f'Contract v{rep.get("contract_version","1.0")} · '
-        f'{len(rep.get("claim_provenance",[]))} traceable claims',
-        foot,
-    ))
 
     doc.build(story)
     return buf.getvalue()

@@ -9,6 +9,7 @@ import {
   ArrowLeft, GitBranch, FileText, ShieldCheck, Loader2, AlertTriangle,
   CheckCircle2, XCircle, Lock, Sparkles, ClipboardList, Download,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const TABS = [
   { key: "analysis", label: "JD Analysis", icon: ClipboardList },
@@ -353,6 +354,54 @@ function EvidenceMap({ map, busy }) {
   );
 }
 
+function EvidenceIndicator({ exp, nodeId }) {
+  const src = exp.track === "intellectual_property" ? exp.organization : exp.employer;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          data-testid="claim-trace-badge"
+          title="Inspect canonical evidence"
+          className="ml-2 inline-flex items-center gap-1 align-middle rounded px-1.5 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors"
+        >
+          <ShieldCheck className="w-3 h-3" />
+          <span className="font-mono text-[9px] uppercase tracking-wider">Evidence</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-72 bg-[#141C2B] border-[#243044] text-slate-200"
+        data-testid="evidence-provenance-popover"
+      >
+        <div className="space-y-2">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400">
+            Canonical Evidence
+          </div>
+          <div className="text-xs">
+            <span className="text-slate-500">Node ID:</span>{" "}
+            <span className="font-mono text-slate-200">{nodeId}</span>
+          </div>
+          <div className="text-xs">
+            <span className="text-slate-500">Verified source:</span>{" "}
+            <span className="text-slate-200">
+              {exp.role || "—"}
+              {src ? ` · ${src}` : ""}
+            </span>
+          </div>
+          {exp.client && (
+            <div className="text-xs">
+              <span className="text-slate-500">Client:</span>{" "}
+              <span className="text-purple-300">{exp.client}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-xs text-emerald-400">
+            <CheckCircle2 className="w-3.5 h-3.5" /> VERIFIED canonical node
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Representation({ rep, onExport }) {
   if (!rep)
     return (
@@ -393,11 +442,22 @@ function Representation({ rep, onExport }) {
             <div key={e.node_id} className="border-l-2 border-[#243044] pl-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <div className="font-display font-semibold text-slate-100">{e.role}</div>
-                  <div className="text-sm text-slate-400">
-                    {e.track === "intellectual_property" ? e.organization : e.employer}
-                    {e.client && <span className="text-purple-300"> · client: {e.client}</span>}
-                  </div>
+                  {e.role ? (
+                    <>
+                      <div className="font-display font-semibold text-slate-100">{e.role}</div>
+                      <div className="text-sm text-slate-400">
+                        {e.track === "intellectual_property" ? e.organization : e.employer}
+                        {e.client && <span className="text-purple-300"> · client: {e.client}</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="font-display font-semibold text-slate-100">
+                      {(e.track === "intellectual_property" ? e.organization : e.employer) || "Experience"}
+                      {e.client && (
+                        <span className="text-sm text-purple-300 font-normal"> · client: {e.client}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <TrackBadge track={e.track} />
@@ -410,13 +470,7 @@ function Representation({ rep, onExport }) {
                     <span className="text-cyan-500 mt-1">▸</span>
                     <span>
                       {b.text}
-                      <span
-                        data-testid="claim-trace-badge"
-                        title={`Traces to ${b.source_node_id}`}
-                        className="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 opacity-60 group-hover:opacity-100 transition-opacity"
-                      >
-                        {b.source_node_id}
-                      </span>
+                      <EvidenceIndicator exp={e} nodeId={b.source_node_id} />
                     </span>
                   </li>
                 ))}
