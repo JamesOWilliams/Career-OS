@@ -1,0 +1,26 @@
+{
+  "summary": "Independent verification of BOUNDED corrections: (1) canonical ATL->DFW fix and (2) generate hardening. DB check against owner 6a99a9f579a11f66402c7fa6 confirms CKN-CIV-USAA-001.evidence[4] = 'Owned readiness for the ~52-API portfolio during AWS/data-center migration from ATL to DFW'; state=VERIFIED preserved, verified_at='2026-09-04T00:03:46.885193+00:00' unchanged, 7 evidence items intact. server.assemble_sections(gen, nodes, used_node_ids) is implemented at /app/backend/server.py:462 with strict isinstance guards: non-dict gen -> {} summary ''; non-dict experiences skipped; non-dict/empty/whitespace bullets skipped; missing 'experiences' key -> every used node falls back to canonical evidence; non-str summary coerced to ''. Every rendered bullet carries source_node_id tracing to a VERIFIED node; IP nodes always render with employer=''. Full pytest suite 45/45 PASS in 53.27s on live preview URL (REACT_APP_BACKEND_URL=https://resume-runtime.preview.emergentagent.com), including all 4 new TestGenerationHardening unit tests and TestCanonicalCorrection. Golden path still green: 10/10 validation gates passed=true. Frontend E2E (admin login -> /opportunities -> create Allstate Director of PM opp -> Run Evidence Matching background job (~10s) -> Generate Resume (~16s) -> 12 claim-trace-badges rendered on Representation tab -> click first badge -> evidence-provenance-popover shows 'Node ID: CKN-MIL-USAF-001', 'Verified source: Program Management Officer · United States Air Force Reserve', 'VERIFIED canonical node'; reverse-chronological order visually confirmed (USAF Reserve 2010-Present, CPS Energy 2021-Present, USAA 2016-2021 on screen). No 500 observed on /generate. All earlier presentation regressions still hold (PDF/DOCX: no CKN-/Contract v/Resume Template v/traceable claim/Target:; content intact).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "Carry-over: no server-side brute-force lockout — test tolerates both 401/429."},
+      {"endpoint": "GET /api/opportunities/{id}/export (PDF)", "issue": "Carry-over cosmetic: reportlab ListFlowable bullet glyph extracts as (cid:127) in pdfminer; bullet text extracts fine."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "assemble_sections (server.py:462-508) correctly isolates malformed-LLM handling into a pure testable function: non-dict gen -> {}, filters non-dict experience entries, filters non-dict/empty bullets, non-str summary -> '', and falls back to canonical evidence when no valid bullets remain. Every bullet retains source_node_id. IP track still forced to employer=''. No invented claims possible under any tested malformed input shape.",
+    "DB correction is scoped exactly as authorized: only owner 6a99a9f579a11f66402c7fa6 node CKN-CIV-USAA-001 evidence[4] touched; admin-seeded USAA node still has the original DFW->ATL phrasing by design (test_usaa_migration_direction_corrected documents this intentionally).",
+    "Overlapping USAA/CPS/Avantus/USAF duplicate records were (correctly) NOT merged — matches the explicit 'do not consolidate' instruction."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (45/45)", "frontend": "100% (full E2E incl. generate + evidence popover)"},
+  "test_credentials": "willsky.james@gmail.com / CareerOS2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Transient Allstate opp 6acd6a6e251f1cc3c0f09818 created during E2E; no DB changes made by this agent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Both authorized bounded corrections verified. assemble_sections hardening fully covers the 4 malformed-input shapes called out (list gen, non-dict experiences, non-dict/empty bullets, missing experiences key). The seeded admin USAA node intentionally still reads 'DFW to ATL' — only the real owner (6a99a9f579a11f66402c7fa6) node was corrected to 'ATL to DFW'. Export/presentation regressions from iteration_4 all retained.",
+  "rca_of_the_issue": "N/A — no defect found. Prior iteration_4 intermittent 500 ('AttributeError: list has no attribute get' at former server.py:500) is resolved by assemble_sections isinstance guards; regression tests (TestGenerationHardening x4) now assert all four malformed shapes."
+}
