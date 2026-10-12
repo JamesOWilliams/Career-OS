@@ -1,0 +1,58 @@
+{
+  "summary": "Independent verification of the NEW read-only Resume v1.0 export feature (PDF + DOCX) plus regression of the golden path. Extended /app/backend/tests/backend_test.py with 8 new export tests inside TestGoldenPath (pdf parse+material-match, docx parse+material-match, no-canonical/no-representation/no-validation mutation across 3 exports, validation still 10 gates & passed after export, format=xls -> 422, cross-user 404, no-token 401, export-before-generate 404 + unknown-opp 404). Full suite: 38/38 PASS. Files were byte-verified (%PDF- magic / PK zip) and parsed with pdfminer (PDF) and python-docx (DOCX): both contain the same professional summary, the same experiences in the same order as the in-app representation (verified by cursor-ordered headline matching against GET /representation), employer vs IP rendering identical (Regional Cloud Meetup rendered as 'Speaker \u2014 Regional Cloud Meetup', employer field empty -> never rendered as employment), client relationship preserved ('Client: Defense Logistics Agency (DLA)' for Avantus Federal), USAF Reserve as 'Program Management Officer \u2014 United States Air Force Reserve', USAA '52 production APIs' metric present, per-claim CKN-... source node ids on every bullet, and footer 'Resume Template v1.0 \u00b7 Contract v1.0 \u00b7 12 traceable claims'. Canonical invariant confirmed: 5 VERIFIED nodes identical (node_id/state/evidence/verified_at/metrics) before and after 3 consecutive exports, USAA evidence still contains 'approximately 52 production APIs'; representation document and stored validation run byte-identical after exports. Full UI E2E as admin: login -> opened Allstate Director of Product Management -> Run Evidence Matching (background job returned fast, evidence-map rendered without hang) -> Generate Resume (12 claim-trace badges) -> clicked export-resume-pdf-btn and export-resume-docx-btn: real browser downloads fired (Director_of_Product_Management_resume.pdf / .docx) with network 200 + application/pdf and the OOXML wordprocessingml MIME + Content-Disposition attachment; the UI-downloaded files were saved and re-parsed offline and match the on-screen representation -> Run Validation still 'Resume Contract: PASSED' with all 10 gates PASS. yarn production build clean (Done in 18.78s, no errors).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/opportunities/{id}/export",
+        "issue": "PDF bullet glyph is drawn via reportlab's ListFlowable symbol font and is not text-extractable (pdfminer yields '(cid:127)' instead of a bullet). Bullet TEXT extracts perfectly, so ATS parsing of content is unaffected, but strict-ATS copy/paste will show a garbage marker character. Cosmetic; consider a Unicode bullet in a standard font."
+      },
+      {
+        "endpoint": "GET /api/opportunities/{id}/export",
+        "issue": "format is a plain str query param validated manually; using Literal['pdf','docx'] would give FastAPI-native 422 with a structured error body (current behavior already returns 422, so functional parity only)."
+      },
+      {
+        "endpoint": "POST /api/opportunities/{id}/match",
+        "issue": "STILL OPEN from iteration_2 (not a regression, not retested in depth): no re-entrancy guard and no stale-job recovery for matching_status='running' if the worker restarts mid-job."
+      },
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "STILL OPEN from iteration_1/2: no brute-force lockout/rate limiting (6 consecutive bad passwords all return 401, no 429); valid creds keep working. Playbook item (4) not implemented."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Login",
+        "issues": ["Submit control has no type=\"submit\" attribute (only data-testid=login-submit-btn); pressing Enter in the password field may not submit the form. Minor a11y/UX nit."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No blocking action for the export feature — it is verified read-only, materially faithful to the in-app representation, and non-mutating.",
+    "Optional: use an extractable Unicode bullet in build_pdf so PDF bullet markers do not extract as (cid:127).",
+    "Optional: declare export format as Literal['pdf','docx'] for framework-level validation.",
+    "Carry-over (pre-existing, not export related): login brute-force lockout, matching job re-entrancy/stale-job recovery."
+  ],
+  "critical_code_review_comments": [
+    "resume_export.py correctly never touches career_knowledge and only serializes rep['sections']; _display_employer keeps intellectual_property as organization — verified in both output formats.",
+    "server.py export handler is read-only (find_one on representations + get on opportunities scoped by OwnedRepo(user id)), so cross-user isolation and 404-before-generate come for free — confirmed by tests.",
+    "Filename is sanitized via re.sub on target_role before being placed in Content-Disposition — no header-injection vector.",
+    "Export response is not cached/streamed from disk; each call re-renders the file in-process. Fine at MVP volume, but PDF/DOCX rendering is CPU-bound and runs on the event loop (build_pdf/build_docx are sync) — consider run_in_threadpool if resume size or concurrency grows."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (38/38)", "frontend": "100% (E2E golden path incl. both exports)"},
+  "seed_data_creation": "Used seeded admin KB (5 VERIFIED James Williams nodes). Test-created: registered throwaway users via /api/auth/register and a few TEST_ opportunities from prior/current suite runs; also created Allstate 'Director of Product Management' opportunities via the class fixture and UI E2E run (id 6a9a23231d355c03f4f78fab).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "willsky.james@gmail.com / CareerOS2026! (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "backend_test.py now has 38 tests; export coverage lives in TestGoldenPath (class-scoped golden_opp fixture, pytest.ini pins -n 2 --dist loadscope so the class stays on one worker and runs in file order: match -> generate -> validate -> export tests). Gotchas found while writing assertions: (1) role prefixes collide ('Software Engineer' is a substring of 'Senior Software Engineer'), so chronology must be asserted with cursor-advancing search on the '<role> \u2014 <employer>' headline inside the post-'Experience' slice, not str.index on the role; (2) the LLM phrases the USAA metric as '52 production APIs', so match with regex r'52\\s+\\S*\\s*APIs?' rather than literal '52 API'; (3) pdfminer is installed, pypdf/PyPDF2 are NOT. Many stale Director of Product Management opportunities exist for admin; UI tests should open the first one or create a fresh one.",
+  "rca_of_the_issue": "No product defect found. The only two initial test failures were flaws in my own new assertions (substring collision on role names and an over-literal '52 API' metric string), fixed in the test file; after the fix 38/38 pass."
+}

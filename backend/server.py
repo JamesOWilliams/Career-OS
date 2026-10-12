@@ -3,11 +3,13 @@ Match Evidence -> Generate -> Validate -> Review. AI proposes; humans verify; co
 """
 import os
 import re
+import io
 import asyncio
 import logging
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from bson import ObjectId
@@ -19,6 +21,7 @@ from security import (
 )
 import ai
 import pipeline
+import resume_export
 from extraction import extract_text
 from seed import seed_admin, seed_james_kb
 
@@ -540,6 +543,40 @@ async def get_representation(opp_id: str, user: dict = Depends(get_current_user)
     if not rep:
         raise HTTPException(status_code=404, detail="No representation generated yet")
     return ser(rep)
+
+
+@api.get("/opportunities/{opp_id}/export")
+async def export_representation(opp_id: str, format: str = "pdf",
+                                user: dict = Depends(get_current_user)):
+    """Read-only export of the persisted representation as PDF or DOCX.
+
+    Renders the stored representation verbatim; never reads/writes canonical knowledge.
+    """
+    fmt = (format or "pdf").lower()
+    if fmt not in ("pdf", "docx"):
+        raise HTTPException(status_code=422, detail="format must be 'pdf' or 'docx'")
+    rep_repo = OwnedRepo("representations", user["id"])
+    rep = await rep_repo.find_one({"opportunity_id": opp_id})
+    if not rep:
+        raise HTTPException(status_code=404, detail="No representation generated yet")
+    opp_repo = OwnedRepo("opportunities", user["id"])
+    opp = await opp_repo.get(opp_id)
+    role = (opp or {}).get("target_role", "Resume")
+    org = (opp or {}).get("organization", "")
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", role).strip("_") or "resume"
+
+    if fmt == "docx":
+        data = resume_export.build_docx(rep, role, org)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        fname = f"{safe}_resume.docx"
+    else:
+        data = resume_export.build_pdf(rep, role, org)
+        media = "application/pdf"
+        fname = f"{safe}_resume.pdf"
+    return StreamingResponse(
+        io.BytesIO(data), media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @api.post("/opportunities/{opp_id}/validate")

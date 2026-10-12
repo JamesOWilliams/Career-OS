@@ -7,7 +7,7 @@ import {
 } from "@/components/primitives";
 import {
   ArrowLeft, GitBranch, FileText, ShieldCheck, Loader2, AlertTriangle,
-  CheckCircle2, XCircle, Lock, Sparkles, ClipboardList,
+  CheckCircle2, XCircle, Lock, Sparkles, ClipboardList, Download,
 } from "lucide-react";
 
 const TABS = [
@@ -126,6 +126,27 @@ export default function OpportunityDetail() {
     }
   };
 
+  const exportResume = async (fmt) => {
+    try {
+      const res = await client.get(`/opportunities/${id}/export?format=${fmt}`, {
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers["content-disposition"] || "";
+      const match = cd.match(/filename="?([^"]+)"?/);
+      a.download = match ? match[1] : `resume.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Exported ${fmt.toUpperCase()}`);
+    } catch (e) {
+      toast.error("Export failed");
+    }
+  };
+
   if (!data)
     return <div className="p-8 text-slate-500 font-mono text-sm">Loading opportunity…</div>;
 
@@ -212,7 +233,7 @@ export default function OpportunityDetail() {
       <div className="p-8 pt-6">
         {tab === "analysis" && <Analysis requirements={requirements} jd={opportunity.job_description} />}
         {tab === "evidence" && <EvidenceMap map={map} busy={busy === "match"} />}
-        {tab === "representation" && <Representation rep={rep} />}
+        {tab === "representation" && <Representation rep={rep} onExport={exportResume} />}
         {tab === "validation" && <Validation validation={validation} />}
       </div>
     </div>
@@ -332,7 +353,7 @@ function EvidenceMap({ map, busy }) {
   );
 }
 
-function Representation({ rep }) {
+function Representation({ rep, onExport }) {
   if (!rep)
     return (
       <div className="co-panel p-10 text-center text-slate-500">
@@ -342,6 +363,25 @@ function Representation({ rep }) {
   const s = rep.sections;
   return (
     <div className="max-w-3xl mx-auto" data-testid="resume-preview-container">
+      <div className="flex items-center justify-end gap-2 mb-3">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 mr-auto">
+          Export Resume v{rep.template_version}
+        </span>
+        <button
+          data-testid="export-resume-pdf-btn"
+          onClick={() => onExport && onExport("pdf")}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/25 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" /> PDF
+        </button>
+        <button
+          data-testid="export-resume-docx-btn"
+          onClick={() => onExport && onExport("docx")}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/25 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" /> DOCX
+        </button>
+      </div>
       <div className="bg-[#0F1622] border border-[#243044] rounded-xl p-8 space-y-6">
         <div>
           <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 mb-2">Professional Summary</div>

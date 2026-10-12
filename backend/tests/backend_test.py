@@ -467,11 +467,129 @@ class TestGoldenPath:
         g = admin.get(f"{API}/opportunities/{golden_opp}/validation", timeout=60)
         assert g.status_code == 200 and g.json()["passed"] is True
 
+    # ---------- feature: resume export (PDF/DOCX) ----------
+    def _rep(self, admin, opp_id):
+        g = admin.get(f"{API}/opportunities/{opp_id}/representation", timeout=60)
+        assert g.status_code == 200, g.text
+        return g.json()
+
+    def test_export_pdf_parses_and_matches_representation(self, admin, golden_opp):
+        import io as _io
+        from pdfminer.high_level import extract_text
+        rep = self._rep(admin, golden_opp)
+        r = admin.get(f"{API}/opportunities/{golden_opp}/export", params={"format": "pdf"}, timeout=LONG)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("application/pdf"), r.headers
+        cd = r.headers.get("content-disposition", "")
+        assert "attachment" in cd and ".pdf" in cd, cd
+        assert r.content[:5] == b"%PDF-", r.content[:20]
+        text = extract_text(_io.BytesIO(r.content))
+        flat = re.sub(r"\s+", " ", text)
+        # summary + footer
+        assert rep["sections"]["summary"].split(".")[0][:40].strip() in flat, "summary missing from PDF"
+        assert "Contract v" in flat and "Resume Template v" in flat, flat[-300:]
+        # every experience role, employer/organization rendering, bullets & provenance ids
+        exps = rep["sections"]["experiences"]
+        exp_part = flat.split("Experience", 1)[-1]
+        cursor, positions = 0, []
+        for e in exps:
+            disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
+            headline = f'{e["role"]} \u2014 {disp}'.strip(" \u2014")
+            idx = exp_part.find(headline, cursor)
+            assert idx >= 0, f"headline missing/out-of-order in PDF: {headline}"
+            cursor = idx + len(headline)
+            positions.append(idx)
+            if e.get("client"):
+                assert f'Client: {e["client"]}' in flat, "client relationship missing"
+            for b in e["bullets"]:
+                assert f'[{b["source_node_id"]}]' in flat, f'trace id missing {b["source_node_id"]}'
+        assert positions == sorted(positions), f"PDF chronology differs from app order: {positions}"
+        # golden-content assertions
+        assert re.search(r"52\s+\S*\s*APIs?", flat), "USAA 52-API metric missing from PDF"
+        assert "Avantus" in flat and "DLA" in flat
+        assert "Reserve" in flat and "Program Management" in flat
+        assert "Regional Cloud Meetup" in flat and "Speaker" in flat
+        # IP must not be rendered as an employer line
+        ip = [e for e in exps if e["track"] == "intellectual_property"]
+        assert ip and ip[0]["employer"] == "", ip
+
+    def test_export_docx_parses_and_matches_representation(self, admin, golden_opp):
+        import io as _io
+        from docx import Document
+        rep = self._rep(admin, golden_opp)
+        r = admin.get(f"{API}/opportunities/{golden_opp}/export", params={"format": "docx"}, timeout=LONG)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"), r.headers
+        assert "attachment" in r.headers.get("content-disposition", "")
+        assert r.content[:2] == b"PK", r.content[:10]
+        doc = Document(_io.BytesIO(r.content))
+        paras = [p.text for p in doc.paragraphs]
+        flat = re.sub(r"\s+", " ", " \n ".join(paras))
+        assert rep["sections"]["summary"] in flat.replace(" \n ", " ") or rep["sections"]["summary"] in " ".join(paras)
+        assert "Contract v" in flat
+        exps = rep["sections"]["experiences"]
+        exp_part = flat.split("Experience", 1)[-1]
+        cursor, positions = 0, []
+        for e in exps:
+            disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
+            headline = f'{e["role"]} \u2014 {disp}'.strip(" \u2014")
+            idx = exp_part.find(headline, cursor)
+            assert idx >= 0, f"headline missing/out-of-order in DOCX: {headline}"
+            cursor = idx + len(headline)
+            positions.append(idx)
+            for b in e["bullets"]:
+                assert b["text"][:40] in flat, "bullet text missing from DOCX"
+                assert f'[{b["source_node_id"]}]' in flat
+        assert positions == sorted(positions), "DOCX chronology differs"
+        assert re.search(r"52\s+\S*\s*APIs?", flat), "USAA 52-API metric missing from DOCX"
+        assert "Avantus" in flat and "Regional Cloud Meetup" in flat
+
+    def test_export_does_not_mutate_canonical_or_representation(self, admin, golden_opp):
+        norm = lambda ns: sorted([(n["node_id"], n["state"], tuple(n.get("evidence") or []),
+                                   n["verified_at"], str(n.get("metrics"))) for n in ns])
+        before_nodes = admin.get(f"{API}/career/nodes", params={"state": "VERIFIED"}, timeout=60).json()
+        before_rep = self._rep(admin, golden_opp)
+        before_val = admin.get(f"{API}/opportunities/{golden_opp}/validation", timeout=60).json()
+        for fmt in ("pdf", "docx", "pdf"):
+            assert admin.get(f"{API}/opportunities/{golden_opp}/export", params={"format": fmt},
+                             timeout=LONG).status_code == 200
+        after_nodes = admin.get(f"{API}/career/nodes", params={"state": "VERIFIED"}, timeout=60).json()
+        assert len(after_nodes) == len(before_nodes) >= 5
+        assert norm(before_nodes) == norm(after_nodes), "export mutated canonical knowledge"
+        assert "52 APIs" in str(after_nodes), "USAA 52 APIs metric changed after export"
+        after_rep = self._rep(admin, golden_opp)
+        assert after_rep == before_rep, "export mutated the representation"
+        after_val = admin.get(f"{API}/opportunities/{golden_opp}/validation", timeout=60).json()
+        assert after_val == before_val, "export mutated validation run"
+
+    def test_validation_still_passes_after_export(self, admin, golden_opp):
+        r = admin.post(f"{API}/opportunities/{golden_opp}/validate", timeout=LONG)
+        assert r.status_code == 200, r.text
+        vr = r.json()
+        assert len(vr["gate_results"]) == 10, list(vr["gate_results"])
+        assert vr["passed"] is True, vr["gate_results"]
+
+    def test_export_unsupported_format_422(self, admin, golden_opp):
+        r = admin.get(f"{API}/opportunities/{golden_opp}/export", params={"format": "xls"}, timeout=60)
+        assert r.status_code == 422, r.status_code
+
+    def test_export_cross_user_404(self, user_b, golden_opp):
+        r = user_b["c"].get(f"{API}/opportunities/{golden_opp}/export", params={"format": "pdf"}, timeout=60)
+        assert r.status_code == 404, r.status_code
+
+    def test_export_without_token_401(self, golden_opp):
+        r = requests.get(f"{API}/opportunities/{golden_opp}/export", params={"format": "pdf"}, timeout=60)
+        assert r.status_code in (401, 403), r.status_code
+
     def test_validate_before_generate_409(self, user_b):
         r = user_b["c"].post(f"{API}/opportunities", json={"target_role": "TEST V", "job_description": ALLSTATE_JD}, timeout=LONG)
         oid = r.json()["id"]
         assert user_b["c"].post(f"{API}/opportunities/{oid}/validate", timeout=60).status_code == 409
         assert user_b["c"].get(f"{API}/opportunities/{oid}/representation", timeout=30).status_code == 404
+        # export before generate -> 404
+        assert user_b["c"].get(f"{API}/opportunities/{oid}/export", params={"format": "pdf"}, timeout=60).status_code == 404
+        assert user_b["c"].get(f"{API}/opportunities/64b7f9f9f9f9f9f9f9f9f9f9/export", params={"format": "pdf"}, timeout=60).status_code == 404
 
 
 # ---------- module: brute force / lockout (playbook check) ----------
