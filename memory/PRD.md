@@ -152,5 +152,20 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
 - P2: login throttling; server.py router modularization; richer admin audit log & parsing-queue metrics.
 - P2: OCR/scanned PDFs; automated file loading; plugin architecture; enterprise tenancy (all deferred).
 
+## Changelog — 2026-06 (DOCX pagination preflight)
+- DOCX-only rendering fix in `build_docx()` (resume_export.py): set page margins to match the
+  accepted PDF (0.55/0.5 top/bottom, 0.7 sides), tightened Normal + List Bullet to exact 11.5pt
+  leading with small space_after, reduced heading sizes, and added keep-with-next chaining on
+  section heading → role → date → first bullet. `build_pdf`, canonical records, representations,
+  evidence, and profiles were NOT touched.
+- Result (LibreOffice headless render): USAA 4→2 pages, HEB 3→2 pages. Content parity vs accepted
+  reportlab PDF = exact (0 token diff); GitHub + LinkedIn hyperlinks intact and external.
+- Tests: existing 7 export/docx tests pass; added tests/test_docx_format.py (3 tests) locking
+  margins/leading/keep-with-next. 
+- Known minor (nonblocking, for human UAT): the "Lead Web Designer — Avantus Federal" entry heading
+  renders at the bottom of page 1 with its date+bullets on page 2 in LibreOffice — a keep-with-next
+  widow LibreOffice does not fully honor (MS Word honors keep-with-next more reliably; not verified
+  in Word in this env). No merge/deploy performed; branch remains reconciliation/heb-canonical.
+
 ## Test Credentials
 See /app/memory/test_credentials.md. Admin: willsky.james@gmail.com / CareerOS2026!

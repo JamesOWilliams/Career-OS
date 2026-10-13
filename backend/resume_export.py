@@ -98,7 +98,7 @@ def _grouped(sections: dict):
 
 def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Inches
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -116,18 +116,62 @@ def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
         link.append(r)
         paragraph._p.append(link)
 
+    def _spacing(p, before=0.0, after=2.0, keep_next=False, keep_together=True, line=11.5):
+        pf = p.paragraph_format
+        pf.space_before = Pt(before)
+        pf.space_after = Pt(after)
+        pf.line_spacing = Pt(line) if line else 1.0
+        pf.widow_control = True
+        pf.keep_together = keep_together
+        pf.keep_with_next = keep_next
+
     sections = rep.get("sections", {})
     ident = sections.get("identity", {}) or {}
     doc = Document()
 
+    # Mirror the accepted PDF page geometry so usable width/height (and therefore line
+    # wrapping and page count) match as closely as practical. DOCX-only; PDF untouched.
+    for s in doc.sections:
+        s.top_margin = Inches(0.55)
+        s.bottom_margin = Inches(0.5)
+        s.left_margin = Inches(0.7)
+        s.right_margin = Inches(0.7)
+
+    # Tighten the global Normal style: python-docx defaults add ~8-10pt after every
+    # paragraph and 1.08 line spacing, which roughly doubled the page count in LibreOffice.
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(10)
+    npf = normal.paragraph_format
+    npf.line_spacing = Pt(11.5)
+    npf.space_before = Pt(0)
+    npf.space_after = Pt(2)
+    npf.widow_control = True
+    # List Bullet inherits big default spacing/indent; tighten and pull the indent in.
+    try:
+        lb = doc.styles["List Bullet"].paragraph_format
+        lb.line_spacing = Pt(11.5)
+        lb.space_before = Pt(0)
+        lb.space_after = Pt(1)
+        lb.left_indent = Inches(0.25)
+        lb.widow_control = True
+    except KeyError:
+        pass
+
     # Identity header: name prominent, then contact, then clickable links.
-    doc.add_heading(ident.get("full_name") or target_role or "Resume", level=0)
+    name_p = doc.add_paragraph()
+    name_r = name_p.add_run(ident.get("full_name") or target_role or "Resume")
+    name_r.bold = True
+    name_r.font.size = Pt(18)
+    name_r.font.color.rgb = RGBColor(0x0B, 0x0F, 0x17)
+    _spacing(name_p, before=0, after=2, keep_next=True, line=None)
     contact = _contact_line(ident)
     if contact:
         cp = doc.add_paragraph()
         cr = cp.add_run(contact)
         cr.font.size = Pt(9.5)
         cr.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+        _spacing(cp, before=0, after=1, keep_next=True)
     links = _safe_links(ident)
     if links:
         lp = doc.add_paragraph()
@@ -135,25 +179,48 @@ def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
             if i:
                 lp.add_run("   ·   ").font.size = Pt(9)
             add_hyperlink(lp, l["url"], l["label"])
+        _spacing(lp, before=0, after=2)
+
+    def _section_heading(label):
+        hp = doc.add_paragraph()
+        hr = hp.add_run(label)
+        hr.bold = True
+        hr.font.size = Pt(11)
+        hr.font.color.rgb = RGBColor(0x03, 0x69, 0xA1)
+        _spacing(hp, before=4, after=2, keep_next=True)
 
     if sections.get("summary"):
-        doc.add_heading("Professional Summary", level=1)
-        doc.add_paragraph(sections["summary"])
+        _section_heading("Professional Summary")
+        sp = doc.add_paragraph(sections["summary"])
+        _spacing(sp, before=0, after=3, keep_together=True)
 
     for label, items in _grouped(sections):
-        doc.add_heading(label, level=1)
+        _section_heading(label)
         for e in items:
             title_p = doc.add_paragraph()
             title_r = title_p.add_run(_heading(e))
             title_r.bold = True
-            meta_p = doc.add_paragraph()
-            meta_r = meta_p.add_run(_meta_line(e))
-            meta_r.italic = True
-            meta_r.font.size = Pt(9)
-            meta_r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-            for b in e.get("bullets", []):
+            title_r.font.size = Pt(10.5)
+            title_r.font.color.rgb = RGBColor(0x0B, 0x0F, 0x17)
+            _spacing(title_p, before=0, after=0, keep_next=True)
+            meta_line = _meta_line(e)
+            if meta_line:
+                meta_p = doc.add_paragraph()
+                meta_r = meta_p.add_run(meta_line)
+                meta_r.italic = True
+                meta_r.font.size = Pt(9)
+                meta_r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+                # keep_with_next chains heading -> meta -> first bullet so an entry never
+                # starts with its heading orphaned at a page bottom.
+                _spacing(meta_p, before=0, after=1, keep_next=True)
+            bullets = e.get("bullets", [])
+            for i, b in enumerate(bullets):
                 bp = doc.add_paragraph(style="List Bullet")
                 bp.add_run(b.get("text", ""))
+                # First bullet stays with the heading/meta; later bullets may flow.
+                _spacing(bp, before=0, after=1, keep_next=(i == 0), keep_together=True)
+            # Small gap after each entry's last bullet without an empty paragraph.
+            doc.paragraphs[-1].paragraph_format.space_after = Pt(3)
 
     buf = io.BytesIO()
     doc.save(buf)
