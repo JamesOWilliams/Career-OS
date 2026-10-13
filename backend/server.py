@@ -459,47 +459,63 @@ def _end_year(end):
     return yrs[0] if yrs else 0
 
 
-def assemble_sections(gen, nodes, used_node_ids):
+def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
     """Deterministically assemble resume sections from matched VERIFIED nodes.
 
-    Tolerant of malformed LLM output: a non-dict `gen`, non-dict experience entries,
-    or non-dict/empty bullets are ignored, and the node falls back to its canonical
-    evidence. Never invents claims — every rendered bullet traces to a verified node.
+    Groups matched nodes by AUTHORITATIVE position (authority_map: source_node_id ->
+    authoritative_node_id) so a position with associated/superseded records renders as a
+    SINGLE employment/assignment entry, while each bullet keeps claim-level provenance to
+    its ORIGINAL source node. Tolerant of malformed LLM output (non-dict gen/experiences/
+    bullets ignored) and never invents claims — bullets fall back to canonical evidence.
     """
     if not isinstance(gen, dict):
         gen = {}
+    authority_map = authority_map or {}
     gen_exp = {}
     for e in gen.get("experiences", []) or []:
         if isinstance(e, dict) and e.get("node_id"):
             gen_exp[e["node_id"]] = e
-    experiences = []
-    claim_prov = []
+
+    groups = {}   # authoritative_id -> list[{text, source_node_id}]
+    order = []
     for nid in used_node_ids:
         node = nodes.get(nid)
         if not node:
             continue
-        ident = node["identity"]
-        # IP is never rendered as employment
-        employer = "" if node["track"] == "intellectual_property" else ident.get("employer", "")
+        auth_id = authority_map.get(nid, nid)
+        if auth_id not in nodes:
+            auth_id = nid
+        if auth_id not in groups:
+            groups[auth_id] = []
+            order.append(auth_id)
         bullets = []
         for b in gen_exp.get(nid, {}).get("bullets", []) or []:
             if not isinstance(b, dict):
                 continue
             text = (b.get("text") or "").strip()
-            if not text:
-                continue
-            bullets.append({"text": text, "source_node_id": nid})
-            claim_prov.append({"text": text, "node_id": nid})
+            if text:
+                bullets.append(text)
         if not bullets:
-            # fall back to canonical evidence directly (still verified; no invention)
-            for ev in node["evidence"][:3]:
-                bullets.append({"text": ev, "source_node_id": nid})
-                claim_prov.append({"text": ev, "node_id": nid})
+            bullets = list(node["evidence"][:3])  # canonical fallback, no invention
+        for t in bullets:
+            groups[auth_id].append({"text": t, "source_node_id": nid})
+
+    experiences = []
+    claim_prov = []
+    for auth_id in order:
+        anode = nodes.get(auth_id)
+        if not anode:
+            continue
+        ident = anode["identity"]
+        employer = "" if anode["track"] == "intellectual_property" else ident.get("employer", "")
+        bl = groups[auth_id]
+        for b in bl:
+            claim_prov.append({"text": b["text"], "node_id": b["source_node_id"]})
         experiences.append({
-            "node_id": nid, "employer": employer, "role": ident.get("role", ""),
+            "node_id": auth_id, "employer": employer, "role": ident.get("role", ""),
             "organization": ident.get("organization", ""), "client": ident.get("client", ""),
-            "track": node["track"], "start": ident.get("start", ""), "end": ident.get("end", ""),
-            "bullets": bullets,
+            "track": anode["track"], "start": ident.get("start", ""), "end": ident.get("end", ""),
+            "bullets": bl,
         })
     experiences.sort(key=lambda e: _end_year(e["end"]), reverse=True)
     summary = gen.get("summary", "")
@@ -546,7 +562,9 @@ async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
 
     # Deterministic, malformed-output-tolerant assembly (reverse-chronological, verified-only).
-    sections, claim_prov = assemble_sections(gen, nodes, used_node_ids)
+    # authority_map groups associated/superseded records under their authoritative position.
+    authority_map = {nid: (n.get("position_ref") or nid) for nid, n in nodes.items()}
+    sections, claim_prov = assemble_sections(gen, nodes, used_node_ids, authority_map)
     rep_repo = OwnedRepo("representations", user["id"])
     for r in await rep_repo.find({"opportunity_id": opp_id}):
         await rep_repo.delete(str(r["_id"]))

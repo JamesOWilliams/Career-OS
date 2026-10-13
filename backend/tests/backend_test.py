@@ -320,7 +320,19 @@ def golden_opp(admin):
         "job_description": ALLSTATE_JD,
     }, timeout=LONG)
     assert r.status_code == 200, r.text
-    return r.json()["id"]
+    oid = r.json()["id"]
+    # Drive the full loop once so a representation exists for ANY dependent test,
+    # independent of method execution order under xdist.
+    assert admin.post(f"{API}/opportunities/{oid}/match", timeout=30).status_code == 200
+    st = "running"
+    for _ in range(60):
+        st = admin.get(f"{API}/opportunities/{oid}/match-status", timeout=30).json().get("status")
+        if st in ("complete", "error"):
+            break
+        time.sleep(3)
+    assert st == "complete", f"matching did not complete: {st}"
+    assert admin.post(f"{API}/opportunities/{oid}/generate", timeout=LONG).status_code == 200
+    return oid
 
 
 class TestGoldenPath:
@@ -721,3 +733,63 @@ class TestCanonicalCorrection:
         n = usaa[0]
         assert n["state"] == "VERIFIED"
         assert "52 APIs" in str(n["retrieval"]["metrics"])
+
+
+
+# ---------- module: canonical reconciliation (authority grouping) ----------
+class TestReconciliationGrouping:
+    """assemble_sections groups associated/superseded nodes under one authoritative entry
+    while preserving each bullet's provenance to its ORIGINAL source node."""
+
+    def _call(self, authority_map):
+        import sys as _s
+        _s.path.insert(0, "/app/backend")
+        from server import assemble_sections
+        nodes = {
+            "USAA-AUTH": {"node_id": "USAA-AUTH", "track": "civilian", "position_ref": "USAA-AUTH",
+                          "identity": {"employer": "USAA", "role": "Digital Product Owner",
+                                       "organization": "", "client": "", "start": "Dec 2024", "end": "Dec 2025"},
+                          "evidence": ["auth ev"], "retrieval": {"metrics": []}},
+            "USAA-ASSOC": {"node_id": "USAA-ASSOC", "track": "civilian", "position_ref": "USAA-AUTH",
+                           "identity": {"employer": "USAA", "role": "Dev Product Owner",
+                                        "organization": "", "client": "", "start": "2024", "end": "2025"},
+                           "evidence": ["assoc ev"], "retrieval": {"metrics": []}},
+            "DLA-SUP": {"node_id": "DLA-SUP", "track": "civilian", "position_ref": "AVANTUS",
+                        "identity": {"employer": "Defense Logistics Agency", "role": "UX Lead",
+                                     "organization": "", "client": "", "start": "2020", "end": "2022"},
+                        "evidence": ["40% reduction"], "retrieval": {"metrics": []}},
+            "AVANTUS": {"node_id": "AVANTUS", "track": "civilian", "position_ref": "AVANTUS",
+                        "identity": {"employer": "Avantus Federal", "role": "Lead Dev",
+                                     "organization": "", "client": "Defense Logistics Agency",
+                                     "start": "2020", "end": "2022"},
+                        "evidence": ["avantus ev"], "retrieval": {"metrics": []}},
+        }
+        gen = {"summary": "S", "experiences": [
+            {"node_id": "USAA-AUTH", "bullets": [{"text": "b-auth"}]},
+            {"node_id": "USAA-ASSOC", "bullets": [{"text": "b-assoc"}]},
+            {"node_id": "DLA-SUP", "bullets": [{"text": "b-dla-40pct"}]},
+            {"node_id": "AVANTUS", "bullets": [{"text": "b-avantus"}]},
+        ]}
+        used = ["USAA-AUTH", "USAA-ASSOC", "DLA-SUP", "AVANTUS"]
+        return assemble_sections(gen, nodes, used, authority_map)
+
+    def test_single_entry_per_authoritative_position(self):
+        amap = {"USAA-AUTH": "USAA-AUTH", "USAA-ASSOC": "USAA-AUTH",
+                "DLA-SUP": "AVANTUS", "AVANTUS": "AVANTUS"}
+        sections, cp = self._call(amap)
+        exps = sections["experiences"]
+        # exactly two entries: one USAA, one Avantus (no DLA-as-employer, no USAA duplicate)
+        assert len(exps) == 2, [e["node_id"] for e in exps]
+        usaa = next(e for e in exps if e["node_id"] == "USAA-AUTH")
+        assert usaa["role"] == "Digital Product Owner" and usaa["employer"] == "USAA"
+        srcs = sorted({b["source_node_id"] for b in usaa["bullets"]})
+        assert srcs == ["USAA-ASSOC", "USAA-AUTH"], srcs  # provenance preserved to origin
+        av = next(e for e in exps if e["node_id"] == "AVANTUS")
+        assert av["employer"] == "Avantus Federal" and av["client"] == "Defense Logistics Agency"
+        # superseded DLA evidence survives, attributed to its origin node, but NOT as an employer
+        assert any(b["source_node_id"] == "DLA-SUP" for b in av["bullets"])
+        assert all(e["employer"] != "Defense Logistics Agency" for e in exps)
+
+    def test_no_authority_map_is_backward_compatible(self):
+        sections, cp = self._call({})  # empty map -> per-node (legacy) behaviour
+        assert len(sections["experiences"]) == 4
