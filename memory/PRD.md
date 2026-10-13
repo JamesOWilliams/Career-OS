@@ -41,6 +41,16 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## HEB PDF pagination correction (2026-06-13) — rendering-only, authorized, validated
+- `build_pdf` wraps each experience entry (heading + date meta + bullets) in reportlab
+  `KeepTogether` so an entry never splits across pages; the section label is kept with its first
+  entry (no orphaned heading). Tightened margins (0.55/0.5in) and section/paragraph spacing; fonts
+  unchanged (9.5–10.5pt, professional/ATS-readable). PDF-only; DOCX/in-app content unchanged.
+- Verified by rendering the actual HEB resume (isolated copy, source account untouched): **3 → 2
+  pages**, DPO Foundry renders with its heading+date+both bullets on page 2 (no orphan page), phone
+  formatted "(210) 550-0251", links clickable, no bare IP, no over-claim language. Regression test
+  `TestArtifactCorrections.test_heb_pdf_pagination_no_orphan_trailing_page` (pymupdf, importorskip).
+
 ## HEB final-artifact corrections (2026-06-13) — authorized, implemented, validated
 - Suppress IP positions with no verified project name (empty organization) from generated
   resumes (server.py generate_resume); evidence stays canonical + Evidence Map. Fixes the generic

@@ -166,30 +166,30 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.colors import HexColor
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, HRFlowable, ListFlowable, ListItem,
+        SimpleDocTemplate, Paragraph, Spacer, HRFlowable, ListFlowable, ListItem, KeepTogether,
     )
 
     sections = rep.get("sections", {})
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=letter, topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+        buf, pagesize=letter, topMargin=0.55 * inch, bottomMargin=0.5 * inch,
         leftMargin=0.7 * inch, rightMargin=0.7 * inch, title=target_role or "Resume",
     )
     base = getSampleStyleSheet()
     name = ParagraphStyle("name", parent=base["Title"], fontSize=18, spaceAfter=2,
                           textColor=HexColor("#0B0F17"))
-    sec = ParagraphStyle("sec", parent=base["Heading2"], fontSize=11, spaceBefore=8,
+    sec = ParagraphStyle("sec", parent=base["Heading2"], fontSize=11, spaceBefore=7,
                          spaceAfter=3, textColor=HexColor("#0369A1"))
-    body = ParagraphStyle("body", parent=base["Normal"], fontSize=10, leading=14)
+    body = ParagraphStyle("body", parent=base["Normal"], fontSize=10, leading=13.5)
     contact = ParagraphStyle("contact", parent=base["Normal"], fontSize=9.5,
                              textColor=HexColor("#444444"), spaceAfter=1)
     linkst = ParagraphStyle("linkst", parent=base["Normal"], fontSize=9.5,
                             textColor=HexColor("#0563C1"), spaceAfter=2)
-    role = ParagraphStyle("role", parent=base["Normal"], fontSize=10.5, leading=13,
+    role = ParagraphStyle("role", parent=base["Normal"], fontSize=10.5, leading=12.5,
                           textColor=HexColor("#0B0F17"))
     meta = ParagraphStyle("meta", parent=base["Normal"], fontSize=8.5,
                           textColor=HexColor("#666666"), spaceAfter=2)
-    bullet = ParagraphStyle("bullet", parent=base["Normal"], fontSize=9.5, leading=13)
+    bullet = ParagraphStyle("bullet", parent=base["Normal"], fontSize=9.5, leading=12.5)
 
     ident = sections.get("identity", {}) or {}
     story = [Paragraph(escape(ident.get("full_name") or target_role or "Resume"), name)]
@@ -210,19 +210,26 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
 
     for label, items in _grouped(sections):
         story.append(Paragraph(label, sec))
-        for e in items:
+        for i, e in enumerate(items):
+            block = []
             heading = _heading(e)
             if heading:
-                story.append(Paragraph(f'<b>{escape(heading)}</b>', role))
+                block.append(Paragraph(f'<b>{escape(heading)}</b>', role))
             meta_line = _meta_line(e)
             if meta_line:
-                story.append(Paragraph(escape(meta_line), meta))
+                block.append(Paragraph(escape(meta_line), meta))
             bl = []
             for b in e.get("bullets", []):
                 bl.append(ListItem(Paragraph(escape(b.get("text", "")), bullet), leftIndent=12))
             if bl:
-                story.append(ListFlowable(bl, bulletType="bullet", start="•", leftIndent=10))
-            story.append(Spacer(1, 3))
+                block.append(ListFlowable(bl, bulletType="bullet", start="•", leftIndent=10))
+            block.append(Spacer(1, 3))
+            # Keep each entry's heading/date/bullets together; keep the section label with its
+            # first entry so no heading is orphaned at the bottom of a page.
+            if i == 0:
+                story[-1:] = [KeepTogether([story[-1]] + block)]
+            else:
+                story.append(KeepTogether(block))
 
     doc.build(story)
     return buf.getvalue()
