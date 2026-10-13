@@ -1,0 +1,18 @@
+{
+  "CKN-CIV-AFWERX-007": {
+    "authority": null,
+    "position_ref": null,
+    "state": "VERIFIED",
+    "evidence_count": 4,
+    "metrics": [
+      "200+ AI, automation, and defense technology concepts evaluated"
+    ]
+  },
+  "CKN-CIV-GEN-018": {
+    "authority": null,
+    "position_ref": null,
+    "state": "VERIFIED",
+    "evidence_count": 2,
+    "metrics": []
+  }
+}

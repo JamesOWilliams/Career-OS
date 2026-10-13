@@ -41,6 +41,22 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## AFWERX fellowship reconciliation (2026-06-13) — human-authorized, HEB UAT
+- Human confirmed CKN-CIV-AFWERX-007 ("Innovation Consultant Fellow", AFWERX/DoD, 2022–2023,
+  200+ metric) and CKN-CIV-GEN-018 ("Innovation Fellow / Evaluator", AFWERX Spark, no dates) are
+  the SAME fellowship ingested from two uploads. Both previously had authority/position_ref=None,
+  so each rendered as a separate civilian position.
+- Determination: required CANONICAL association, not representation-only grouping (grouping keys off
+  position_ref; the AI/representation layer must not silently decide two records are the same role).
+- Applied via `reconcile_afwerx.py` (rollback snapshot `reconcile_afwerx_before.json`): AFWERX-007
+  → authoritative (position_ref=self); GEN-018 → associated (position_ref=AFWERX-007). ONLY authority
+  + position_ref changed; evidence/identity/metrics/provenance/state (VERIFIED) untouched.
+- Validated on isolated copy against the real HEB target: AFWERX renders ONCE with 2 consolidated
+  nonredundant bullets, authoritative title/dates used, both USAF Reserve assignments kept distinct
+  (433 SFS and United States Air Force Reserve — per human instruction), no evidence lost (73 total).
+- NOTE: existing HEB opportunity representations are pre-reconciliation; regenerate to see the single
+  AFWERX entry. No branch merge/deploy.
+
 ## Candidate Identity & Contact (2026-06-13) — authorized, implemented, validated
 - Owner-scoped `candidate_profiles` collection (one per owner, unique index). Human-controlled
   full_name/email/phone/location/links; NEVER written by AI and NEVER defaulted from login email.
