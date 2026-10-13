@@ -173,8 +173,28 @@ def run_quality_gates(representation: dict, nodes_by_id: dict, requirements: lis
         if gates["canonical_truth"]["status"] == "pass" else "Undefendable claims present",
     }
 
+    # 11. Identity & Contact: application-ready header completeness.
+    gates["identity_contact"] = identity_contact_gate(sections)
+
     passed = all(g["status"] != "fail" for g in gates.values())
     return {"gate_results": gates, "passed": passed}
+
+
+def identity_contact_gate(sections: dict) -> dict:
+    """Application-ready: full name, location, and at least one contact method present."""
+    ident = (sections or {}).get("identity") or {}
+    missing = []
+    if not (ident.get("full_name") or "").strip():
+        missing.append("full name")
+    if not (ident.get("location") or "").strip():
+        missing.append("location")
+    if not ((ident.get("email") or "").strip() or (ident.get("phone") or "").strip()):
+        missing.append("contact (email or phone)")
+    return {
+        "status": "pass" if not missing else "fail",
+        "detail": "Candidate identity header complete (name, location, contact)"
+        if not missing else f"Missing required identity field(s): {', '.join(missing)}",
+    }
 
 
 def _metric_violations(claim_prov, nodes_by_id):

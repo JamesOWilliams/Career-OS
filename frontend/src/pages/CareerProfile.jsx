@@ -17,6 +17,8 @@ export default function CareerProfile() {
   const [stateFilter, setStateFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -29,8 +31,17 @@ export default function CareerProfile() {
       setLoading(false);
     }
   };
+  const loadProfile = async () => {
+    try {
+      const { data } = await client.get("/profile");
+      setProfile({ links: [], ...data });
+    } catch (e) {
+      setProfile({ full_name: "", email: "", phone: "", location: "", links: [] });
+    }
+  };
   useEffect(() => {
     load();
+    loadProfile();
   }, []);
 
   const filtered = nodes.filter(
@@ -62,6 +73,26 @@ export default function CareerProfile() {
     }
   };
 
+  const saveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      const payload = {
+        full_name: profile.full_name || "",
+        email: profile.email || "",
+        phone: profile.phone || "",
+        location: profile.location || "",
+        links: (profile.links || []).filter((l) => (l.url || "").trim()),
+      };
+      const { data } = await client.put("/profile", payload);
+      setProfile({ links: [], ...data });
+      toast.success("Identity & contact saved");
+    } catch (e) {
+      toast.error(formatError(e.response?.data?.detail));
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   const counts = {
     verified: nodes.filter((n) => n.state === "VERIFIED").length,
     proposed: nodes.filter((n) => n.state === "PROPOSED").length,
@@ -81,6 +112,12 @@ export default function CareerProfile() {
       </PageHeader>
 
       <div className="p-8 space-y-5">
+        <IdentityPanel
+          profile={profile}
+          setProfile={setProfile}
+          onSave={saveProfile}
+          saving={savingProfile}
+        />
         <div className="flex flex-wrap items-center gap-2">
           {TRACKS.map((t) => (
             <button
@@ -253,3 +290,103 @@ export default function CareerProfile() {
     </div>
   );
 }
+
+const LINK_LABELS = ["LinkedIn", "GitHub", "Portfolio", "Website", "Other"];
+
+function IdentityPanel({ profile, setProfile, onSave, saving }) {
+  if (!profile) return null;
+  const setField = (k, v) => setProfile({ ...profile, [k]: v });
+  const links = profile.links || [];
+  const setLink = (i, patch) => {
+    const next = links.map((l, idx) => (idx === i ? { ...l, ...patch } : l));
+    setProfile({ ...profile, links: next });
+  };
+  const addLink = () => setProfile({ ...profile, links: [...links, { label: "LinkedIn", url: "" }] });
+  const removeLink = (i) => setProfile({ ...profile, links: links.filter((_, idx) => idx !== i) });
+
+  const FIELDS = [
+    ["full_name", "Full name", "Jane A. Candidate"],
+    ["email", "Professional email", "jane@domain.com"],
+    ["phone", "Phone", "+1 555 000 0000"],
+    ["location", "Location", "San Antonio, TX"],
+  ];
+
+  return (
+    <div className="co-panel p-6 space-y-4" data-testid="identity-contact-panel">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-display font-semibold text-base text-slate-100">Identity &amp; Contact</div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Appears at the top of generated resumes. Separate from canonical career evidence. Enter
+            your professional email explicitly — it is never taken from your login.
+          </div>
+        </div>
+        <button
+          data-testid="save-identity-btn"
+          onClick={onSave}
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm bg-cyan-500 text-[#04121a] font-semibold hover:bg-cyan-400 disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {FIELDS.map(([k, label, ph]) => (
+          <div key={k}>
+            <label className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{label}</label>
+            <input
+              data-testid={`identity-${k}-input`}
+              value={profile[k] || ""}
+              placeholder={ph}
+              onChange={(e) => setField(k, e.target.value)}
+              className="mt-1 w-full bg-[#0B0F17] border border-[#243044] rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-500/60"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+            Professional links (HTTPS only)
+          </label>
+          <button
+            data-testid="add-link-btn"
+            onClick={addLink}
+            className="text-xs px-2 py-1 rounded-lg text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/15"
+          >
+            + Add link
+          </button>
+        </div>
+        {links.map((l, i) => (
+          <div key={i} className="flex gap-2 items-center">
+            <select
+              data-testid={`link-label-${i}`}
+              value={l.label || "Other"}
+              onChange={(e) => setLink(i, { label: e.target.value })}
+              className="bg-[#0B0F17] border border-[#243044] rounded-lg px-2 py-2 text-sm outline-none focus:border-cyan-500/60"
+            >
+              {LINK_LABELS.map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+            <input
+              data-testid={`link-url-${i}`}
+              value={l.url || ""}
+              placeholder="https://…"
+              onChange={(e) => setLink(i, { url: e.target.value })}
+              className="flex-1 bg-[#0B0F17] border border-[#243044] rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-500/60"
+            />
+            <button
+              data-testid={`remove-link-${i}`}
+              onClick={() => removeLink(i)}
+              className="text-slate-400 hover:text-rose-300 p-2"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+

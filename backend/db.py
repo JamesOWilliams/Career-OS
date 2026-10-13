@@ -26,6 +26,7 @@ PRIVATE_COLLECTIONS = {
     "evidence_matches",
     "representations",
     "validation_runs",
+    "candidate_profiles",
 }
 
 
@@ -94,3 +95,4 @@ async def ensure_indexes():
     await db.evidence_matches.create_index([("owner_user_id", 1), ("opportunity_id", 1)])
     await db.representations.create_index([("owner_user_id", 1), ("opportunity_id", 1)])
     await db.validation_runs.create_index([("owner_user_id", 1), ("opportunity_id", 1)])
+    await db.candidate_profiles.create_index("owner_user_id", unique=True)

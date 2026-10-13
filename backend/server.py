@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from starlette.middleware.cors import CORSMiddleware
 from bson import ObjectId
 
@@ -91,6 +91,95 @@ async def login(body: LoginBody):
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return {"id": user["id"], "email": user["email"], "role": user.get("role", "user")}
+
+
+# =========================== CANDIDATE IDENTITY & CONTACT ===========================
+# Owner-scoped, one profile per user. Human-controlled; NEVER written by the AI layer and
+# NEVER populated from the login email. Partial saves allowed.
+import re as _re_mod
+
+_EMAIL_RE = _re_mod.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class LinkItem(BaseModel):
+    label: str = ""
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _https_only(cls, v):
+        v = (v or "").strip()
+        if v and not v.lower().startswith("https://"):
+            raise ValueError("links must be safe HTTPS URLs")
+        return v
+
+
+class ProfileBody(BaseModel):
+    full_name: str = ""
+    email: str = ""          # professional contact email — NOT the login email
+    phone: str = ""
+    location: str = ""
+    links: list[LinkItem] = []
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v):
+        v = (v or "").strip()
+        if v and not _EMAIL_RE.match(v):
+            raise ValueError("invalid professional email")
+        return v
+
+
+def _ser_profile(p: dict | None) -> dict:
+    p = p or {}
+    links = [{"label": l.get("label", ""), "url": l.get("url", "")}
+             for l in (p.get("links") or []) if l.get("url")]
+    return {
+        "full_name": p.get("full_name", ""), "email": p.get("email", ""),
+        "phone": p.get("phone", ""), "location": p.get("location", ""),
+        "links": links, "updated_at": p.get("updated_at"),
+    }
+
+
+def _identity_snapshot(profile: dict | None) -> dict:
+    s = _ser_profile(profile)
+    s.pop("updated_at", None)
+    return s
+
+
+def _identity_missing(identity: dict) -> list[str]:
+    identity = identity or {}
+    missing = []
+    if not (identity.get("full_name") or "").strip():
+        missing.append("full name")
+    if not (identity.get("location") or "").strip():
+        missing.append("location")
+    if not ((identity.get("email") or "").strip() or (identity.get("phone") or "").strip()):
+        missing.append("a contact method (email or phone)")
+    return missing
+
+
+@api.get("/profile")
+async def get_profile(user: dict = Depends(get_current_user)):
+    repo = OwnedRepo("candidate_profiles", user["id"])
+    return _ser_profile(await repo.find_one({}))
+
+
+@api.put("/profile")
+async def put_profile(body: ProfileBody, user: dict = Depends(get_current_user)):
+    repo = OwnedRepo("candidate_profiles", user["id"])
+    data = {
+        "full_name": body.full_name.strip(), "email": body.email.strip(),
+        "phone": body.phone.strip(), "location": body.location.strip(),
+        "links": [{"label": l.label.strip(), "url": l.url.strip()} for l in body.links if l.url.strip()],
+        "updated_at": now_iso(),
+    }
+    existing = await repo.find_one({})
+    if existing:
+        await repo.update(str(existing["_id"]), data)
+    else:
+        await repo.insert(data)
+    return _ser_profile(await repo.find_one({}))
 
 
 # =========================== CAREER KNOWLEDGE ===========================
@@ -732,6 +821,10 @@ async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
     identity_map = {aid: aid for aid in used_node_ids}
     sections, claim_prov = assemble_sections(gen, nodes, used_node_ids, identity_map)
 
+    # Verbatim identity/contact snapshot (human-controlled; AI never touched it).
+    prof_repo = OwnedRepo("candidate_profiles", user["id"])
+    sections["identity"] = _identity_snapshot(await prof_repo.find_one({}))
+
     rep_repo = OwnedRepo("representations", user["id"])
     for r in await rep_repo.find({"opportunity_id": opp_id}):
         await rep_repo.delete(str(r["_id"]))
@@ -748,7 +841,11 @@ async def get_representation(opp_id: str, user: dict = Depends(get_current_user)
     rep = await repo.find_one({"opportunity_id": opp_id})
     if not rep:
         raise HTTPException(status_code=404, detail="No representation generated yet")
-    return ser(rep)
+    out = ser(rep)
+    prof_repo = OwnedRepo("candidate_profiles", user["id"])
+    current = _identity_snapshot(await prof_repo.find_one({}))
+    out["identity_stale"] = (rep.get("sections", {}).get("identity") or {}) != current
+    return out
 
 
 @api.get("/opportunities/{opp_id}/export")
@@ -765,6 +862,14 @@ async def export_representation(opp_id: str, format: str = "pdf",
     rep = await rep_repo.find_one({"opportunity_id": opp_id})
     if not rep:
         raise HTTPException(status_code=404, detail="No representation generated yet")
+    # Application-ready gate: block export when required identity/contact fields are missing.
+    identity = rep.get("sections", {}).get("identity") or {}
+    missing = _identity_missing(identity)
+    if missing:
+        raise HTTPException(status_code=409, detail={
+            "blocked": True, "reason": "identity_incomplete", "missing": missing,
+            "remediation": "Add your name, location and a contact method in Career Profile → Identity & Contact, then regenerate.",
+        })
     opp_repo = OwnedRepo("opportunities", user["id"])
     opp = await opp_repo.get(opp_id)
     role = (opp or {}).get("target_role", "Resume")

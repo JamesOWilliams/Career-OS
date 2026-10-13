@@ -927,3 +927,76 @@ class TestRepresentationRefinement:
         assert texts[0] == "Alpha accomplishment"  # authoritative first
         # case-insensitive dedup of 'shared claim'
         assert sum(1 for t in texts if t.lower().startswith("shared claim")) == 1
+
+
+
+# ---------- module: candidate identity & contact profile ----------
+class TestCandidateProfile:
+    """Owner-scoped identity/contact: isolation, validation, HTTPS links, partial saves."""
+
+    def test_new_user_profile_is_empty_shell(self):
+        tok, _, _ = _register("profempty")
+        r = _client(tok).get(f"{API}/profile", timeout=30)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["full_name"] == "" and d["email"] == "" and d["links"] == []
+
+    def test_save_and_fetch_profile(self):
+        tok, _, _ = _register("profsave")
+        c = _client(tok)
+        payload = {
+            "full_name": "Jane A. Candidate", "email": "jane@pro.dev",
+            "phone": "+1 555 100 2000", "location": "Austin, TX",
+            "links": [{"label": "LinkedIn", "url": "https://linkedin.com/in/jane"}],
+        }
+        r = c.put(f"{API}/profile", json=payload, timeout=30)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["full_name"] == "Jane A. Candidate"
+        assert d["email"] == "jane@pro.dev"
+        assert d["links"][0]["url"] == "https://linkedin.com/in/jane"
+        # fetched back identically
+        assert _client(tok).get(f"{API}/profile", timeout=30).json()["phone"] == "+1 555 100 2000"
+
+    def test_partial_save_allowed(self):
+        tok, _, _ = _register("profpartial")
+        r = _client(tok).put(f"{API}/profile", json={"full_name": "Only Name"}, timeout=30)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["full_name"] == "Only Name" and d["email"] == "" and d["location"] == ""
+
+    def test_one_profile_per_owner_upsert(self):
+        tok, _, _ = _register("profupsert")
+        c = _client(tok)
+        c.put(f"{API}/profile", json={"full_name": "First"}, timeout=30)
+        c.put(f"{API}/profile", json={"full_name": "Second", "location": "NYC"}, timeout=30)
+        d = c.get(f"{API}/profile", timeout=30).json()
+        assert d["full_name"] == "Second" and d["location"] == "NYC"
+
+    def test_non_https_link_rejected(self):
+        tok, _, _ = _register("profhttp")
+        r = _client(tok).put(
+            f"{API}/profile",
+            json={"links": [{"label": "x", "url": "http://insecure.com"}]}, timeout=30,
+        )
+        assert r.status_code == 422, r.text
+
+    def test_invalid_email_rejected(self):
+        tok, _, _ = _register("profmail")
+        r = _client(tok).put(f"{API}/profile", json={"email": "not-an-email"}, timeout=30)
+        assert r.status_code == 422, r.text
+
+    def test_owner_isolation(self):
+        tok_a, _, _ = _register("profiso_a")
+        tok_b, _, _ = _register("profiso_b")
+        _client(tok_a).put(f"{API}/profile", json={"full_name": "A Secret", "email": "a@pro.dev"}, timeout=30)
+        # B never sees A's data and has its own independent (empty) profile
+        b = _client(tok_b).get(f"{API}/profile", timeout=30).json()
+        assert b["full_name"] == "" and b["email"] == ""
+        # A unchanged after B reads
+        a = _client(tok_a).get(f"{API}/profile", timeout=30).json()
+        assert a["full_name"] == "A Secret"
+
+    def test_profile_requires_auth(self):
+        r = requests.get(f"{API}/profile", timeout=30)
+        assert r.status_code in (401, 403)

@@ -144,7 +144,21 @@ export default function OpportunityDetail() {
       window.URL.revokeObjectURL(url);
       toast.success(`Exported ${fmt.toUpperCase()}`);
     } catch (e) {
-      toast.error("Export failed");
+      // 409 identity-incomplete arrives as a blob; parse it for a clear remediation message.
+      let detail = e.response?.data;
+      if (detail instanceof Blob) {
+        try { detail = JSON.parse(await detail.text()).detail; } catch { detail = null; }
+      } else {
+        detail = detail?.detail;
+      }
+      if (detail?.reason === "identity_incomplete") {
+        toast.error(
+          `Add ${detail.missing.join(", ")} in Career Profile → Identity & Contact, then regenerate.`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error("Export failed");
+      }
     }
   };
 
@@ -448,6 +462,42 @@ function Representation({ rep, onExport }) {
         </button>
       </div>
       <div className="bg-[#0F1622] border border-[#243044] rounded-xl p-8 space-y-6">
+        {rep.identity_stale && (
+          <div
+            data-testid="identity-stale-banner"
+            className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2"
+          >
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              This resume uses an older identity snapshot. Your Identity &amp; Contact details have
+              changed since it was generated — click <span className="text-cyan-300">Generate Resume</span> to refresh it.
+            </span>
+          </div>
+        )}
+        {s.identity && (s.identity.full_name || s.identity.email || s.identity.phone) && (
+          <div className="border-b border-[#243044] pb-4" data-testid="resume-identity-header">
+            <div className="font-display font-bold text-2xl text-slate-50">{s.identity.full_name}</div>
+            <div className="text-sm text-slate-400 mt-1">
+              {[s.identity.email, s.identity.phone, s.identity.location].filter(Boolean).join("  ·  ")}
+            </div>
+            {(s.identity.links || []).length > 0 && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+                {s.identity.links.map((l, i) => (
+                  <a
+                    key={i}
+                    data-testid={`resume-identity-link-${i}`}
+                    href={l.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+                  >
+                    {l.label || l.url}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 mb-2">Professional Summary</div>
           <p className="text-sm text-slate-200 leading-relaxed">{s.summary}</p>

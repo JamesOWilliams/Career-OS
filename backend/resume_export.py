@@ -8,6 +8,20 @@ and never mutates the representation; it only serializes it into a downloadable 
 import io
 from xml.sax.saxutils import escape
 
+
+def _contact_line(ident: dict) -> str:
+    parts = [p for p in (ident.get("email", ""), ident.get("phone", ""), ident.get("location", "")) if p]
+    return "  ·  ".join(parts)
+
+
+def _safe_links(ident: dict) -> list:
+    out = []
+    for l in ident.get("links", []) or []:
+        url = (l.get("url") or "").strip()
+        if url.lower().startswith("https://"):
+            out.append({"label": (l.get("label") or url).strip(), "url": url})
+    return out
+
 CATEGORY_ORDER = ["experience", "military", "projects"]
 CATEGORY_LABELS = {
     "experience": "Experience",
@@ -72,11 +86,42 @@ def _grouped(sections: dict):
 def build_docx(rep: dict, target_role: str, organization: str) -> bytes:
     from docx import Document
     from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    def add_hyperlink(paragraph, url, text):
+        r_id = paragraph.part.relate_to(url, RT.HYPERLINK, is_external=True)
+        link = OxmlElement("w:hyperlink")
+        link.set(qn("r:id"), r_id)
+        r = OxmlElement("w:r")
+        rpr = OxmlElement("w:rPr")
+        color = OxmlElement("w:color"); color.set(qn("w:val"), "0563C1"); rpr.append(color)
+        u = OxmlElement("w:u"); u.set(qn("w:val"), "single"); rpr.append(u)
+        r.append(rpr)
+        t = OxmlElement("w:t"); t.text = text; r.append(t)
+        link.append(r)
+        paragraph._p.append(link)
 
     sections = rep.get("sections", {})
+    ident = sections.get("identity", {}) or {}
     doc = Document()
 
-    doc.add_heading(target_role or "Resume", level=0)
+    # Identity header: name prominent, then contact, then clickable links.
+    doc.add_heading(ident.get("full_name") or target_role or "Resume", level=0)
+    contact = _contact_line(ident)
+    if contact:
+        cp = doc.add_paragraph()
+        cr = cp.add_run(contact)
+        cr.font.size = Pt(9.5)
+        cr.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+    links = _safe_links(ident)
+    if links:
+        lp = doc.add_paragraph()
+        for i, l in enumerate(links):
+            if i:
+                lp.add_run("   ·   ").font.size = Pt(9)
+            add_hyperlink(lp, l["url"], l["label"])
 
     if sections.get("summary"):
         doc.add_heading("Professional Summary", level=1)
@@ -123,13 +168,27 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
     sec = ParagraphStyle("sec", parent=base["Heading2"], fontSize=11, spaceBefore=10,
                          spaceAfter=4, textColor=HexColor("#0369A1"))
     body = ParagraphStyle("body", parent=base["Normal"], fontSize=10, leading=14)
+    contact = ParagraphStyle("contact", parent=base["Normal"], fontSize=9.5,
+                             textColor=HexColor("#444444"), spaceAfter=1)
+    linkst = ParagraphStyle("linkst", parent=base["Normal"], fontSize=9.5,
+                            textColor=HexColor("#0563C1"), spaceAfter=2)
     role = ParagraphStyle("role", parent=base["Normal"], fontSize=10.5, leading=13,
                           textColor=HexColor("#0B0F17"))
     meta = ParagraphStyle("meta", parent=base["Normal"], fontSize=8.5,
                           textColor=HexColor("#666666"), spaceAfter=2)
     bullet = ParagraphStyle("bullet", parent=base["Normal"], fontSize=9.5, leading=13)
 
-    story = [Paragraph(escape(target_role or "Resume"), name)]
+    ident = sections.get("identity", {}) or {}
+    story = [Paragraph(escape(ident.get("full_name") or target_role or "Resume"), name)]
+    cline = _contact_line(ident)
+    if cline:
+        story.append(Paragraph(escape(cline), contact))
+    links = _safe_links(ident)
+    if links:
+        link_html = "  ·  ".join(
+            f'<a href="{escape(l["url"])}" color="#0563C1">{escape(l["label"])}</a>' for l in links
+        )
+        story.append(Paragraph(link_html, linkst))
     story.append(HRFlowable(width="100%", thickness=0.6, color=HexColor("#CCCCCC")))
 
     if sections.get("summary"):
