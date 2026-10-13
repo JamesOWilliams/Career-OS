@@ -1047,44 +1047,32 @@ class TestArtifactCorrections:
 
 
     def test_heb_pdf_pagination_no_orphan_trailing_page(self):
-        """Regression: the HEB-shaped resume renders on ~2 pages and the trailing IP project
-        (DPO Foundry) keeps its heading + date + bullets together (never orphaned alone)."""
-        import pytest, sys as _s
+        """Regression against the ACTUAL HEB representation structure (9 entries / 27 bullets):
+        renders on <=2 pages with no orphaned section/entry heading and no lost entries."""
+        import pytest, sys as _s, json, os
         pymupdf = pytest.importorskip("pymupdf")
         _s.path.insert(0, "/app/backend")
-        from resume_export import build_pdf
-
-        def exp(track, cat, role, emp, org, client, dd, bullets):
-            return {"track": track, "category": cat, "role": role, "employer": emp,
-                    "organization": org, "client": client, "display_dates": dd,
-                    "start": dd, "end": dd, "bullets": [{"text": t} for t in bullets]}
-        L = ("Owned end-to-end product responsibilities across a portfolio of ~52 enterprise APIs "
-             "and 2+ engineering teams, maintaining a four-sprint backlog spanning features, "
-             "migrations, compliance, vulnerability remediation, and technical debt.")
-        rep = {"sections": {
-            "identity": {"full_name": "HEB Candidate", "email": "heb@pro.dev",
-                         "phone": "12105500251", "location": "San Antonio, TX",
-                         "links": [{"label": "GitHub", "url": "https://github.com/x"},
-                                   {"label": "LinkedIn", "url": "https://linkedin.com/in/x"}]},
-            "summary": (L + " ") * 3,
-            "experiences": [
-                exp("civilian", "experience", "Digital Product Owner", "USAA", "", "", "Dec 2024 – Dec 2025", [L, L, L, L, L]),
-                exp("civilian", "experience", "Lead Digital Product Manager", "CPS Energy", "", "", "2023 – 2024", [L, L, L]),
-                exp("civilian", "experience", "Innovation Consultant Fellow", "AFWERX", "Department of Defense", "", "2022 – 2023", [L, L]),
-                exp("civilian", "experience", "Lead Web Designer / Developer", "Avantus Federal", "", "Defense Logistics Agency", "2020 – 2022", [L, L]),
-                exp("civilian", "experience", "Systems Migration Lead", "Omnitec Solutions", "", "", "2014 – 2018", [L, L]),
-                exp("military", "military", "Program Manager", "United States Air Force Reserve", "United States Air Force Reserve", "", "2014 – 2025", [L, L, L]),
-                exp("intellectual_property", "projects", "Creator / Product Lead", "", "DIE Orbit – Decision Intelligence Engine", "", "2026", [L, L]),
-                exp("intellectual_property", "projects", "Founder / Product Experiment Lead", "", "DPO Foundry", "", "2026",
-                    ["Developing and validating a repeatable AI-augmented product execution model",
-                     "Model covers translating product decisions into specs, implementation, validation, recovery"]),
-            ],
-        }}
+        from resume_export import build_pdf, _heading
+        fx = os.path.join(os.path.dirname(__file__), "fixtures", "heb_rep.json")
+        rep = json.load(open(fx))
+        exps = rep["sections"]["experiences"]
         pdf = build_pdf(rep, "Senior Product Manager, Data Platform", "HEB")
         doc = pymupdf.open(stream=pdf, filetype="pdf")
         assert doc.page_count <= 2, f"expected <=2 pages, got {doc.page_count}"
-        last = doc[doc.page_count - 1].get_text()
-        # DPO Foundry heading AND at least one of its bullets must be on the same (last) page
-        assert "DPO Foundry" in last, "DPO Foundry heading missing from final page"
-        assert "repeatable AI-augmented product execution model" in last, "DPO Foundry bullets orphaned from heading"
+        pages = [doc[i].get_text() for i in range(doc.page_count)]
+        full = "\n".join(pages)
+        # every entry heading and its first bullet render, and sit on the SAME page (no orphan)
+        for e in exps:
+            h = _heading(e)
+            first_bullet = (e.get("bullets") or [{}])[0].get("text", "")
+            snippet = first_bullet[:40]
+            if not h or not snippet:
+                continue
+            # locate the page containing the heading; its first bullet must be on that same page
+            hp = next((i for i, p in enumerate(pages) if h in p), None)
+            assert hp is not None, f"heading missing from PDF: {h!r}"
+            assert snippet in pages[hp], f"orphaned heading (bullet on another page): {h!r}"
+        # section labels present
+        for label in ("Experience", "Independent Projects"):
+            assert label in full, f"section label missing: {label}"
         doc.close()

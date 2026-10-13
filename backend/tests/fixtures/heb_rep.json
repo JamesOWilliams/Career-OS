@@ -1,0 +1,358 @@
+{
+  "sections": {
+    "summary": "Senior Product Manager with a track record of owning complex, data-intensive platform portfolios\u2014including ~52 enterprise APIs across multiple engineering teams\u2014and driving large-scale modernization initiatives such as SOAP-to-REST migrations, cloud datacenter transitions, and a $7M multi-year enterprise transformation. Experienced delivering end-to-end roadmaps for platforms serving 1.5M+ users, orchestrating release readiness for 300+ enterprise systems, and translating ambiguous technical requirements into structured backlogs with clear acceptance criteria and delivery priorities. Brings additional depth in AI-native product development, having architected a zero-to-one decision intelligence platform with governance-oriented workflows, explainability frameworks, and bounded AI augmentation\u2014directly applicable to responsible data platform and ML product work. Adept at aligning cross-functional stakeholders, managing compliance and security constraints, and sustaining operational continuity across distributed, mission-critical environments.",
+    "experiences": [
+      {
+        "node_id": "CKN-CIV-USAA-013",
+        "employer": "USAA",
+        "role": "Digital Product Owner",
+        "organization": "",
+        "client": "",
+        "track": "civilian",
+        "category": "experience",
+        "start": "Dec 2024",
+        "end": "Dec 2025",
+        "display_dates": "Dec 2024 \u2013 Dec 2025",
+        "bullets": [
+          {
+            "text": "Owned product responsibilities across a portfolio of ~52 enterprise APIs and 2+ engineering teams, maintaining a four-sprint backlog spanning ~10 product features and 3 migration initiatives while balancing feature delivery, compliance, vulnerability remediation, and technical debt.",
+            "source_node_id": "CKN-CIV-USAA-013",
+            "source_node_ids": [
+              "CKN-CIV-USAA-013",
+              "CKN-CIV-USAA-001"
+            ]
+          },
+          {
+            "text": "Led modernization of legacy SOAP services to REST architectures and coordinated Java-to-Go migration\u2014managing requirements, acceptance criteria, UAT, and production readiness\u2014while executing a zero-downtime datacenter migration from ATL to DFW on AWS, covering the full ~52-API portfolio.",
+            "source_node_id": "CKN-CIV-USAA-013",
+            "source_node_ids": [
+              "CKN-CIV-USAA-013",
+              "CKN-CIV-USAA-005",
+              "CKN-CIV-USAA-001"
+            ]
+          },
+          {
+            "text": "Translated business, security, and architecture needs into prioritized, execution-ready features and user stories, facilitating cross-team refinement sessions to surface dependencies, sequencing plans, and operational risks across multiple delivery teams.",
+            "source_node_id": "CKN-CIV-USAA-013",
+            "source_node_ids": [
+              "CKN-CIV-USAA-013",
+              "CKN-CIV-USAA-005"
+            ]
+          },
+          {
+            "text": "Partnered across engineering, architecture, QA, security, release, and business stakeholders to coordinate dependencies, escalate blockers, and ensure production readiness\u2014leading UAT validation and release coordination in a highly regulated financial services environment.",
+            "source_node_id": "CKN-CIV-USAA-013",
+            "source_node_ids": [
+              "CKN-CIV-USAA-013",
+              "CKN-CIV-USAA-005",
+              "CKN-CIV-USAA-001"
+            ]
+          },
+          {
+            "text": "Owned and prioritized a complex Agile backlog supporting 400+ personalization experiences, 1,400+ insights, and 35 integrated systems across member-facing banking and insurance platforms, directing delivery coordination across engineering, analytics, architecture, QA, and operations teams.",
+            "source_node_id": "CKN-CIV-USAA-005",
+            "source_node_ids": [
+              "CKN-CIV-USAA-005"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-CIV-CPSENE-006",
+        "employer": "CPS Energy",
+        "role": "Lead Digital Product Manager",
+        "organization": "",
+        "client": "",
+        "track": "civilian",
+        "category": "experience",
+        "start": "2023",
+        "end": "2024",
+        "display_dates": "2023 \u2013 2024",
+        "bullets": [
+          {
+            "text": "Owned end-to-end product roadmap and backlog for enterprise digital platforms serving 1.5M+ residential and commercial users, establishing vision, success criteria, and delivery priorities across customer-facing utility systems.",
+            "source_node_id": "CKN-CIV-CPSENE-006",
+            "source_node_ids": [
+              "CKN-CIV-CPSENE-006",
+              "CKN-CIV-CPSENE-002",
+              "CKN-CIV-CPSENE-014"
+            ]
+          },
+          {
+            "text": "Authored PRD that initiated a $7M multi-year enterprise transformation initiative, securing executive sponsorship and modernization alignment across 130+ integrated systems.",
+            "source_node_id": "CKN-CIV-CPSENE-006",
+            "source_node_ids": [
+              "CKN-CIV-CPSENE-006"
+            ]
+          },
+          {
+            "text": "Leveraged analytics and platform insights to identify optimization opportunities, dependency risks, and customer experience improvements, translating customer, business, technical, and accessibility requirements into executable Agile delivery plans.",
+            "source_node_id": "CKN-CIV-CPSENE-006",
+            "source_node_ids": [
+              "CKN-CIV-CPSENE-006",
+              "CKN-CIV-CPSENE-002",
+              "CKN-CIV-CPSENE-014"
+            ]
+          },
+          {
+            "text": "Coordinated research, design, engineering, vendors, and cross-functional stakeholders within a regulated public utility to drive data-informed digital capabilities on a predictable Agile cadence.",
+            "source_node_id": "CKN-CIV-CPSENE-006",
+            "source_node_ids": [
+              "CKN-CIV-CPSENE-006",
+              "CKN-CIV-CPSENE-002",
+              "CKN-CIV-CPSENE-014"
+            ]
+          },
+          {
+            "text": "Maintained enterprise governance and accessibility standards throughout delivery while partnering across business and technology functions to improve customer-facing digital experiences.",
+            "source_node_id": "CKN-CIV-CPSENE-014",
+            "source_node_ids": [
+              "CKN-CIV-CPSENE-014"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-CIV-AFWERX-007",
+        "employer": "AFWERX",
+        "role": "Innovation Consultant Fellow",
+        "organization": "Department of Defense",
+        "client": "",
+        "track": "civilian",
+        "category": "experience",
+        "start": "2022",
+        "end": "2023",
+        "display_dates": "2022 \u2013 2023",
+        "bullets": [
+          {
+            "text": "Evaluated 200+ AI, automation, and defense technology concepts within a DoD innovation incubator, applying structured feasibility assessment and product thinking to support leadership prioritization and early-stage investment decisions.",
+            "source_node_id": "CKN-CIV-AFWERX-007",
+            "source_node_ids": [
+              "CKN-CIV-AFWERX-007",
+              "CKN-CIV-GEN-018"
+            ]
+          },
+          {
+            "text": "Guided cross-functional teams through the full product lifecycle\u2014discovery, MVP definition, workflow design, and operational planning\u2014for mission-oriented technology initiatives in a U.S. Air Force ecosystem.",
+            "source_node_id": "CKN-CIV-AFWERX-007",
+            "source_node_ids": [
+              "CKN-CIV-AFWERX-007",
+              "CKN-CIV-GEN-018"
+            ]
+          },
+          {
+            "text": "Translated complex emerging technology concepts into actionable product roadmaps by applying structured problem framing and communicating technical solutions for operational stakeholders in complex deployment environments.",
+            "source_node_id": "CKN-CIV-AFWERX-007",
+            "source_node_ids": [
+              "CKN-CIV-AFWERX-007",
+              "CKN-CIV-GEN-018"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-CIV-AVANTU-003",
+        "employer": "Avantus Federal",
+        "role": "Lead Web Designer / Developer",
+        "organization": "",
+        "client": "Defense Logistics Agency",
+        "track": "civilian",
+        "category": "experience",
+        "start": "2020",
+        "end": "2022",
+        "display_dates": "2020 \u2013 2022",
+        "bullets": [
+          {
+            "text": "Assessed 3,078+ enterprise web pages within the AFPIMS ecosystem (supporting 1,600+ DoD sites) and delivered architecture, workflow, and governance artifacts that reduced digital footprint by 40% while raising task-completion and usability success rates to 80%.",
+            "source_node_id": "CKN-CIV-DEFENS-008",
+            "source_node_ids": [
+              "CKN-CIV-DEFENS-008",
+              "CKN-CIV-AVANTU-003",
+              "CKN-CIV-AVANTU-015"
+            ]
+          },
+          {
+            "text": "Translated complex DoD modernization requirements into structured delivery work\u2014spanning information architecture, governance documentation, and future-state planning\u2014coordinating across federal stakeholders, technical teams, and partner organizations supporting Defense Logistics Agency enterprise website modernization.",
+            "source_node_id": "CKN-CIV-AVANTU-003",
+            "source_node_ids": [
+              "CKN-CIV-AVANTU-003",
+              "CKN-CIV-AVANTU-015"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-CIV-OMNITE-009",
+        "employer": "Omnitec Solutions",
+        "role": "Systems Migration Lead",
+        "organization": "",
+        "client": "",
+        "track": "civilian",
+        "category": "experience",
+        "start": "2014",
+        "end": "2018",
+        "display_dates": "2014 \u2013 2018",
+        "bullets": [
+          {
+            "text": "Orchestrated end-to-end migration planning, QA coordination, and release readiness for 300+ enterprise websites, managing deployment sequencing and stakeholder coordination to support 800+ enterprise users across distributed systems environments.",
+            "source_node_id": "CKN-CIV-OMNITE-009",
+            "source_node_ids": [
+              "CKN-CIV-OMNITE-009"
+            ]
+          },
+          {
+            "text": "Standardized delivery and release workflows to improve deployment consistency, operational predictability, and system stability across enterprise environments.",
+            "source_node_id": "CKN-CIV-OMNITE-009",
+            "source_node_ids": [
+              "CKN-CIV-OMNITE-009"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-MIL-GEN-019",
+        "employer": "",
+        "role": "Security Assistant / Information Protection Liaison",
+        "organization": "U.S. Air Force Reserve \u2013 433 SFS",
+        "client": "",
+        "track": "military",
+        "category": "military",
+        "start": "2021",
+        "end": "2025",
+        "display_dates": "2021 \u2013 2025",
+        "bullets": [
+          {
+            "text": "Served as liaison to the Information Protection enterprise, coordinating clearance status and program documentation for ~85 personnel across organizational boundaries within a regulated security environment.",
+            "source_node_id": "CKN-MIL-GEN-019",
+            "source_node_ids": [
+              "CKN-MIL-GEN-019"
+            ]
+          },
+          {
+            "text": "Drove cross-functional alignment during transition to a new clearance evaluation system, navigating disciplined documentation requirements and access governance protocols to ensure continuity.",
+            "source_node_id": "CKN-MIL-GEN-019",
+            "source_node_ids": [
+              "CKN-MIL-GEN-019"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-MIL-UNITED-004",
+        "employer": "United States Air Force Reserve",
+        "role": "Computer / Cyber Support Program Manager",
+        "organization": "United States Air Force Reserve",
+        "client": "",
+        "track": "military",
+        "category": "military",
+        "start": "2014",
+        "end": "2025",
+        "display_dates": "2014 \u2013 2025",
+        "bullets": [
+          {
+            "text": "Managed IT and cyber-support capabilities for ~120 personnel across NIPR/SIPR environments, overseeing compliance, funding and resource planning, and operational readiness to sustain mission-critical infrastructure.",
+            "source_node_id": "CKN-MIL-UNITED-004",
+            "source_node_ids": [
+              "CKN-MIL-UNITED-004"
+            ]
+          },
+          {
+            "text": "Coordinated a ~60-workstation technical refresh and led infrastructure lifecycle modernization, identifying dependencies and mitigating risks to maintain operational continuity with minimal escalation.",
+            "source_node_id": "CKN-MIL-UNITED-004",
+            "source_node_ids": [
+              "CKN-MIL-UNITED-004"
+            ]
+          },
+          {
+            "text": "Led vulnerability-assessment planning across military environments, applying structured risk awareness and rapid domain acquisition to proactively surface and address security exposures.",
+            "source_node_id": "CKN-MIL-UNITED-004",
+            "source_node_ids": [
+              "CKN-MIL-UNITED-004",
+              "CKN-MIL-GEN-020"
+            ]
+          },
+          {
+            "text": "Drove cross-functional alignment across technology, program, and operational workstreams in complex military environments, leveraging interpersonal and coordination skills to execute structured programs under competing priorities.",
+            "source_node_id": "CKN-MIL-GEN-020",
+            "source_node_ids": [
+              "CKN-MIL-GEN-020"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-IP-GEN-016",
+        "employer": "",
+        "role": "Creator / Product Lead",
+        "organization": "DIE Orbit \u2013 Decision Intelligence Engine",
+        "client": "",
+        "track": "intellectual_property",
+        "category": "projects",
+        "start": "2026",
+        "end": "2026",
+        "display_dates": "2026",
+        "bullets": [
+          {
+            "text": "Architected and built a zero-to-one AI-native decision intelligence product end-to-end\u2014spanning React/Tailwind frontend, FastAPI/Python backend, and MongoDB\u2014with an ontology-driven scoring framework using weighted deterministic logic, confidence calibration, and LLM-generated narrative to deliver explainable readiness assessments across organizational domains.",
+            "source_node_id": "CKN-IP-GEN-016",
+            "source_node_ids": [
+              "CKN-IP-GEN-016",
+              "CKN-IP-GEN-011"
+            ]
+          },
+          {
+            "text": "Designed a governance-oriented product model encompassing structured evidence collection, blocker tracking, remediation workflows, reassessment cycles, and immutable versioned Decision Records, ensuring human authority, auditability, and bounded AI augmentation throughout the decision lifecycle.",
+            "source_node_id": "CKN-IP-GEN-016",
+            "source_node_ids": [
+              "CKN-IP-GEN-016"
+            ]
+          }
+        ]
+      },
+      {
+        "node_id": "CKN-IP-GEN-017",
+        "employer": "",
+        "role": "Founder / Product Experiment Lead",
+        "organization": "DPO Foundry",
+        "client": "",
+        "track": "intellectual_property",
+        "category": "projects",
+        "start": "2026",
+        "end": "2026",
+        "display_dates": "2026",
+        "bullets": [
+          {
+            "text": "Developing and validating a repeatable AI-augmented product execution model",
+            "source_node_id": "CKN-IP-GEN-017",
+            "source_node_ids": [
+              "CKN-IP-GEN-017"
+            ]
+          },
+          {
+            "text": "Model covers translating product decisions into specifications, implementation, validation, recovery, and captured learning",
+            "source_node_id": "CKN-IP-GEN-017",
+            "source_node_ids": [
+              "CKN-IP-GEN-017"
+            ]
+          }
+        ]
+      }
+    ],
+    "identity": {
+      "full_name": "James Williams",
+      "email": "willsky.james@gmail.com",
+      "phone": "12105500251",
+      "location": "San Antonio, TX",
+      "links": [
+        {
+          "label": "GitHub",
+          "url": "https://github.com/JamesOWilliams/"
+        },
+        {
+          "label": "LinkedIn",
+          "url": "https://www.linkedin.com/in/jwilliams1217/"
+        }
+      ]
+    }
+  }
+}
