@@ -9,8 +9,21 @@ import io
 from xml.sax.saxutils import escape
 
 
+def _format_phone(raw: str) -> str:
+    """Display-only US phone formatting; stored value is never changed. 10-digit ->
+    (XXX) XXX-XXXX, 11-digit leading 1 -> +1 (XXX) XXX-XXXX. Non-standard passes through."""
+    s = (raw or "").strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) == 10:
+        return f"({digits[0:3]}) {digits[3:6]}-{digits[6:]}"
+    if len(digits) == 11 and digits[0] == "1":
+        return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
+    return s
+
+
 def _contact_line(ident: dict) -> str:
-    parts = [p for p in (ident.get("email", ""), ident.get("phone", ""), ident.get("location", "")) if p]
+    phone = _format_phone(ident.get("phone", ""))
+    parts = [p for p in (ident.get("email", ""), phone, ident.get("location", "")) if p]
     return "  ·  ".join(parts)
 
 
@@ -165,8 +178,8 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
     base = getSampleStyleSheet()
     name = ParagraphStyle("name", parent=base["Title"], fontSize=18, spaceAfter=2,
                           textColor=HexColor("#0B0F17"))
-    sec = ParagraphStyle("sec", parent=base["Heading2"], fontSize=11, spaceBefore=10,
-                         spaceAfter=4, textColor=HexColor("#0369A1"))
+    sec = ParagraphStyle("sec", parent=base["Heading2"], fontSize=11, spaceBefore=8,
+                         spaceAfter=3, textColor=HexColor("#0369A1"))
     body = ParagraphStyle("body", parent=base["Normal"], fontSize=10, leading=14)
     contact = ParagraphStyle("contact", parent=base["Normal"], fontSize=9.5,
                              textColor=HexColor("#444444"), spaceAfter=1)
@@ -209,7 +222,7 @@ def build_pdf(rep: dict, target_role: str, organization: str) -> bytes:
                 bl.append(ListItem(Paragraph(escape(b.get("text", "")), bullet), leftIndent=12))
             if bl:
                 story.append(ListFlowable(bl, bulletType="bullet", start="•", leftIndent=10))
-            story.append(Spacer(1, 5))
+            story.append(Spacer(1, 3))
 
     doc.build(story)
     return buf.getvalue()

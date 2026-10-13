@@ -41,6 +41,23 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## HEB final-artifact corrections (2026-06-13) — authorized, implemented, validated
+- Suppress IP positions with no verified project name (empty organization) from generated
+  resumes (server.py generate_resume); evidence stays canonical + Evidence Map. Fixes the generic
+  "Developer — Independent Project" entries (GEN-010/012). Root cause: representation selection.
+- Qualitative over-claim guard: consolidation prompt forbids unverified superlatives/role-labels;
+  `_validate_consolidated` rejects bullets with `_UNVERIFIED_QUALIFIERS` (sole/solely/single-handed/
+  single-handedly/subject matter expert/foremost) unless grounded in cited evidence. Fixes USAA
+  "sole product owner" / "subject matter expert" and CPS "subject matter expert". Root cause:
+  language synthesis (numeric-only validator didn't catch qualitative over-claims).
+- Avantus 40%/80%: verified + correctly provenanced to CKN-CIV-DEFENS-008 — no change (per user).
+- Presentation (rendering only, canonical/profile unchanged): US phone formatter
+  (`_format_phone`: 10-digit→(XXX) XXX-XXXX, 11-digit+1→+1 (XXX) XXX-XXXX, non-US passthrough) in
+  PDF/DOCX/in-app; reduced PDF section/bullet spacing for ~2 pages; consistent heading/date meta.
+- Validated on isolated copy vs real HEB target: 2 named IP projects only (no bare IP), no
+  over-claims in any bullet, DOCX phone "(210) 550-0251", unnamed-IP evidence retained+VERIFIED,
+  8 entries / 21 bullets. Unit tests TestArtifactCorrections 3/3; profile + refinement suites green.
+
 ## AFWERX fellowship reconciliation (2026-06-13) — human-authorized, HEB UAT
 - Human confirmed CKN-CIV-AFWERX-007 ("Innovation Consultant Fellow", AFWERX/DoD, 2022–2023,
   200+ metric) and CKN-CIV-GEN-018 ("Innovation Fellow / Evaluator", AFWERX Spark, no dates) are

@@ -1000,3 +1000,46 @@ class TestCandidateProfile:
     def test_profile_requires_auth(self):
         r = requests.get(f"{API}/profile", timeout=30)
         assert r.status_code in (401, 403)
+
+
+# ---------- module: final-artifact corrections (qualifier guard, phone, IP suppression) ----------
+class TestArtifactCorrections:
+    def _import(self):
+        import sys as _s
+        _s.path.insert(0, "/app/backend")
+        import server
+        return server
+
+    def test_qualifier_guard_rejects_unverified_superlatives(self):
+        s = self._import()
+        items = [{"idx": 0, "node_id": "N1", "text": "Owned and prioritized the product backlog"}]
+        idx_to_node = {0: "N1"}
+        nodes = {"N1": {"retrieval": {"metrics": []}}}
+        raw = [
+            {"text": "Served as sole product owner for the platform", "evidence_idxs": [0]},   # 'sole' not in evidence -> reject
+            {"text": "Served as subject matter expert for the platform", "evidence_idxs": [0]}, # SME not in evidence -> reject
+            {"text": "Owned and prioritized the product backlog", "evidence_idxs": [0]},         # clean -> keep
+        ]
+        out = s._validate_consolidated(raw, items, idx_to_node, nodes, budget=5)
+        texts = [b["text"] for b in out]
+        assert len(out) == 1 and "sole" not in texts[0].lower() and "subject matter expert" not in texts[0].lower()
+
+    def test_qualifier_guard_allows_grounded_term(self):
+        s = self._import()
+        items = [{"idx": 0, "node_id": "N1", "text": "Served as subject matter expert across teams"}]
+        idx_to_node = {0: "N1"}
+        nodes = {"N1": {"retrieval": {"metrics": []}}}
+        raw = [{"text": "Acted as subject matter expert across teams", "evidence_idxs": [0]}]
+        out = s._validate_consolidated(raw, items, idx_to_node, nodes, budget=5)
+        assert len(out) == 1  # term is grounded in cited evidence -> allowed
+
+    def test_us_phone_formatting(self):
+        import sys as _s
+        _s.path.insert(0, "/app/backend")
+        from resume_export import _format_phone
+        assert _format_phone("2105500251") == "(210) 550-0251"
+        assert _format_phone("12105500251") == "+1 (210) 550-0251"
+        assert _format_phone("(210) 550-0251") == "(210) 550-0251"
+        assert _format_phone("+44 20 7946 0000") == "+44 20 7946 0000"  # non-US passthrough
+        assert _format_phone("") == ""
+

@@ -664,6 +664,13 @@ def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
     return {"summary": summary, "experiences": experiences}, claim_prov
 
 
+# Unverified qualitative over-claims rejected unless grounded in the cited evidence.
+_UNVERIFIED_QUALIFIERS = [
+    "sole", "solely", "single-handed", "single-handedly", "subject matter expert", "foremost",
+]
+
+
+
 def _validate_consolidated(raw, items, idx_to_node, nodes, budget):
     """Reject LLM bullets that cite no evidence or introduce unsupported numbers. Returns
     [{text, source_node_ids}]. Metric tokens must appear in cited evidence or contributing
@@ -696,6 +703,15 @@ def _validate_consolidated(raw, items, idx_to_node, nodes, budget):
             if num not in allowed:
                 ok = False
                 break
+        # Qualitative guard: reject unverified superlatives / exclusivity / role-labels not
+        # grounded in the cited evidence (e.g. "sole", "subject matter expert").
+        if ok:
+            low = text.lower()
+            allowed_low = allowed.lower()
+            for term in _UNVERIFIED_QUALIFIERS:
+                if re.search(r"\b" + re.escape(term) + r"\b", low) and term not in allowed_low:
+                    ok = False
+                    break
         if not ok:
             continue
         out.append({"text": text, "source_node_ids": sids})
@@ -793,6 +809,16 @@ async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
 
     if not positions:
         raise HTTPException(status_code=409, detail="No matched verified evidence to generate from")
+
+    # Suppress IP positions lacking a verified project name (data gap) — evidence is preserved
+    # in canonical and the Evidence Map; it is simply not rendered as a nameless project entry.
+    positions = {
+        aid: pos for aid, pos in positions.items()
+        if not (_category(nodes.get(aid, {}).get("track")) == "projects"
+                and not (nodes.get(aid, {}).get("identity", {}).get("organization") or "").strip())
+    }
+    if not positions:
+        raise HTTPException(status_code=409, detail="No renderable verified evidence to generate from")
 
     # Bounded semantic consolidation per authoritative position (concurrency-limited).
     sem = asyncio.Semaphore(5)

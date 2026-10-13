@@ -246,6 +246,9 @@ Write AT MOST {budget} resume bullets for this position:
 - Keep genuinely DISTINCT accomplishments in separate bullets.
 - Prefer the claims most relevant to the target requirements.
 - Use ONLY the evidence above. Do NOT invent facts, numbers, tools, employers or clients.
+- Do NOT add unverified superlatives, exclusivity or role-labels (e.g. "sole", "only",
+  "single-handedly", "subject matter expert", "expert", "foremost") unless that exact wording
+  appears in the evidence above.
 - Each bullet MUST cite the evidence indices it draws from.
 
 Return JSON array:

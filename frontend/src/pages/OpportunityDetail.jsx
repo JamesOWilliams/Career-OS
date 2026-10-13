@@ -478,7 +478,7 @@ function Representation({ rep, onExport }) {
           <div className="border-b border-[#243044] pb-4" data-testid="resume-identity-header">
             <div className="font-display font-bold text-2xl text-slate-50">{s.identity.full_name}</div>
             <div className="text-sm text-slate-400 mt-1">
-              {[s.identity.email, s.identity.phone, s.identity.location].filter(Boolean).join("  ·  ")}
+              {[s.identity.email, formatPhone(s.identity.phone), s.identity.location].filter(Boolean).join("  ·  ")}
             </div>
             {(s.identity.links || []).length > 0 && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
@@ -518,6 +518,14 @@ function Representation({ rep, onExport }) {
       </div>
     </div>
   );
+}
+
+function formatPhone(raw) {
+  const digits = (raw || "").replace(/\D/g, "");
+  if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  if (digits.length === 11 && digits[0] === "1")
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  return raw || "";
 }
 
 function ExperienceEntry({ e }) {
