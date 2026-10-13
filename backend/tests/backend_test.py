@@ -314,6 +314,12 @@ class TestAdminBoundary:
 # ---------- module: golden path (admin seeded James KB + Allstate JD) ----------
 @pytest.fixture(scope="class")
 def golden_opp(admin):
+    # Identity/contact is required for application-ready export (identity_contact gate).
+    admin.put(f"{API}/profile", json={
+        "full_name": "James Williams", "email": "james.williams@pro.dev",
+        "phone": "2105550199", "location": "San Antonio, TX",
+        "links": [{"label": "LinkedIn", "url": "https://www.linkedin.com/in/jwilliams/"}],
+    }, timeout=30)
     r = admin.post(f"{API}/opportunities", json={
         "target_role": "Director of Product Management",
         "organization": "Allstate",
@@ -644,7 +650,7 @@ class TestGoldenPath:
         r = admin.post(f"{API}/opportunities/{golden_opp}/validate", timeout=LONG)
         assert r.status_code == 200, r.text
         vr = r.json()
-        assert len(vr["gate_results"]) == 10, list(vr["gate_results"])
+        assert len(vr["gate_results"]) == 11, list(vr["gate_results"])
         assert vr["passed"] is True, vr["gate_results"]
 
     def test_export_unsupported_format_422(self, admin, golden_opp):

@@ -41,6 +41,20 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## HEB PDF pagination correction (2026-06-13) — rendering-only, authorized, VERIFIED
+- Root cause (read-only diagnosed): content volume, NOT KeepTogether. With KeepTogether fully
+  removed the HEB rep was still 3 pages; relaxing keep never recovered a page.
+- Fix in `build_pdf`: removed per-entry `KeepTogether`; use keep-with-next on section labels +
+  entry heading + date (orphan-heading prevention only), bullets flow naturally; variant-D spacing
+  (sec spaceBefore 7→5/after 3→2, body leading 13.5→12.5, role 12.5→12, bullet 12.5→11.5 +
+  spaceAfter 1, inter-entry spacer 3→2, margins 0.55/0.5in). Fonts UNCHANGED (18/11/10.5/10/9.5/8.5).
+- VERIFIED by testing_agent (iteration_8): actual HEB rep (9 entries/27 bullets) renders 2 pages
+  (was 3), 0 orphaned headings, phone "(210) 550-0251", both https links embedded, named IP only,
+  no clipping/overlap. TestArtifactCorrections 4/4; full TestGoldenPath 20/20 (fixed golden_opp to
+  set an identity profile for the new export identity gate; gate-count assertions 10→11).
+- Regression fixture: `tests/fixtures/heb_rep.json` (snapshot of real HEB rep) +
+  `TestArtifactCorrections.test_heb_pdf_pagination_no_orphan_trailing_page`.
+
 ## HEB PDF pagination correction (2026-06-13) — rendering-only, authorized, validated
 - `build_pdf` wraps each experience entry (heading + date meta + bullets) in reportlab
   `KeepTogether` so an entry never splits across pages; the section label is kept with its first

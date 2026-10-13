@@ -1,0 +1,44 @@
+{
+  "summary": "Backend-only regression verification of the HEB resume PDF rendering fix (variant-D spacing + keep-with-next in backend/resume_export.py build_pdf). Authoritative TestArtifactCorrections suite passes (4/4). Independent pymupdf render from tests/fixtures/heb_rep.json confirms page_count=2 (<=2 target met, down from 3), US-formatted phone '(210) 550-0251' present and raw '12105500251' absent, both https hyperlinks (github.com/JamesOWilliams, linkedin.com/in/jwilliams1217) are embedded, all three section labels (Experience / Military Service / Independent Projects) render, named IP projects (DIE Orbit, DPO Foundry) appear with no bare 'Developer — Independent Project' placeholder, and no orphaned entry heading is detected (every role heading shares its page with its first bullet).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/opportunities/{id}/export (pdf,docx)", "issue": "5 pre-existing TestGoldenPath failures unrelated to the rendering fix: 4 return 409 identity_incomplete because the admin/golden profile in this preview env lacks name/location/contact (resolved in UX via the Identity & Contact panel per iteration_7, but the pytest seed data is not populated); and test_validation_gates_pass expects 10 gate_results while the server now returns 11 (new gate added). Neither is caused by the resume_export spacing change."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verification_details": {
+    "pytest_targeted": "pytest tests/backend_test.py::TestArtifactCorrections -q => 4 passed (includes test_heb_pdf_pagination_no_orphan_trailing_page, test_us_phone_formatting, qualifier-guard tests)",
+    "pytest_full": "pytest tests/backend_test.py -q => 61 passed, 5 failed (all 5 in TestGoldenPath; pre-existing env/seed + gate-count issues, not regressions from this fix)",
+    "independent_pymupdf_render": {
+      "page_count": 2,
+      "links_extracted": ["https://github.com/JamesOWilliams/", "https://www.linkedin.com/in/jwilliams1217/"],
+      "phone_present": "(210) 550-0251",
+      "raw_phone_absent": true,
+      "section_labels_present": ["Experience", "Military Service", "Independent Projects"],
+      "named_ip_projects_present": ["DIE Orbit", "DPO Foundry"],
+      "bare_generic_ip_heading": "absent",
+      "orphan_headings_detected": 0
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/verify_heb_pdf.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Not blocking this fix) Main agent: seed the admin/golden-path profile with identity (name/location/contact) in the pytest fixture setup so the 4 export GoldenPath tests pass, and update test_validation_gates_pass expected length from 10 to 11 to match the new gate list ['canonical_truth','evidence','metric_integrity','chronology','relationship_integrity','jd_relevance',...]."
+  ],
+  "critical_code_review_comments": [
+    "resume_export.build_pdf change is minimally invasive and correct: using sec.keepWithNext / role.keepWithNext / meta.keepWithNext for orphan-prevention is the right ReportLab idiom; replacing per-entry KeepTogether removes the forced-page-break-when-overflowing failure mode that caused the trailing nearly-empty page 3.",
+    "Variant-D spacing deltas are modest (sec spaceBefore 7->5, spaceAfter 3->2; body leading 13.5->12.5; role 12.5->12; bullet 12.5->11.5 + spaceAfter 1; inter-entry spacer 3->2; margins 0.55in/0.5in). Visual inspection of the rendered 2-page PDF shows no clipping or overlap — bullets remain readable at 9.5pt with 11.5 leading.",
+    "backend_test.py: TestGoldenPath::test_validation_gates_pass hardcodes `== 10` for gate count — this is brittle; prefer assertion on required gate names being a subset of gate_results.keys()."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "92% (61/66 pytest tests; 100% on the rendering-fix-related TestArtifactCorrections; 5 pre-existing TestGoldenPath failures unrelated to this change)"},
+  "test_credentials": "Not required — regression runs from backend fixture directly (tests/fixtures/heb_rep.json).",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The HEB rendering fix is verified. If re-visiting: (1) 4 TestArtifactCorrections tests cover the pagination/orphan/phone/qualifier regressions and must stay green; (2) the independent pymupdf verifier lives at /app/backend/tests/verify_heb_pdf.py and is a quick sanity check without needing the live export API; (3) the 5 TestGoldenPath failures are pre-existing environmental/seed issues, not rendering regressions — do not attribute to resume_export changes."
+}
