@@ -41,6 +41,26 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## Candidate Identity & Contact (2026-06-13) — authorized, implemented, validated
+- Owner-scoped `candidate_profiles` collection (one per owner, unique index). Human-controlled
+  full_name/email/phone/location/links; NEVER written by AI and NEVER defaulted from login email.
+- `GET/PUT /api/profile` (ProfileBody): email format + HTTPS-only link validation (422 on bad
+  input); partial saves allowed; owner derived from auth token only.
+- `generate_resume` snapshots identity verbatim into `sections.identity`; AI functions never
+  receive identity/contact data. `GET /representation` adds `identity_stale` (true when the
+  profile changed since generation — offers regeneration, never silently alters stored export).
+- Pipeline gate `identity_contact` (fail if full name / location / contact missing). Export
+  (`/export`) returns 409 `{reason:identity_incomplete, missing[], remediation}` until complete.
+- Rendering: identity header (name prominent, contact line, clickable HTTPS links) in in-app
+  Representation, PDF (reportlab `<a href>`) and DOCX (python-docx hyperlink relationships);
+  "Target:" never leaked. Experiences/categories/dates unchanged.
+- Frontend: Identity & Contact panel in Career Profile (`/profile`), separate Save; export 409
+  surfaces a remediation toast; stale-snapshot banner in the Representation.
+- Validation: backend pytest TestCandidateProfile 8/8; isolated integrated E2E (generate→export
+  409→save→regenerate→export 200 + PDF/DOCX header + hyperlinks + stale flag) all assertions pass;
+  frontend testing_agent iteration_7 8/8 (panel, validation, persistence, add/remove link,
+  owner isolation). Canonical/evidence/matches/opportunities untouched; no merge/deploy.
+
 ## Representation Quality Refinement (2026-06-13) — scopes a–e, representation layer only
 - a. Deterministic target-relevant selection in generate_resume: matched source nodes grouped by
   authoritative position; per-position bullet budget driven by strongest representation_weight.
