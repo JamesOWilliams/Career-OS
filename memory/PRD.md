@@ -41,6 +41,29 @@ and must remain visible; "No sufficient canonical evidence" is a first-class res
   evidence; Avantus employer with DLA as client (relationship integrity); USAF Reserve as program
   management (not PM tenure); IP never rendered as employment; conditional 30% metric excluded.
 
+## Representation Quality Refinement (2026-06-13) — scopes a–e, representation layer only
+- a. Deterministic target-relevant selection in generate_resume: matched source nodes grouped by
+  authoritative position; per-position bullet budget driven by strongest representation_weight.
+- b. Bounded LLM semantic consolidation (ai.consolidate_position), one call per authoritative
+  position, concurrency-limited. _validate_consolidated rejects uncited bullets and unsupported
+  numbers; deterministic _fallback_bullets on failure. Budgets BULLET_BUDGET
+  {primary:5, supporting:3, contextual:2, chronology:1, ip:2}.
+- c. Rendering: IP headings are PROJECT-FIRST with verified project name (never bare generic role,
+  never invented; no-name IP → "<role> — Independent Project"); shared _format_date_range
+  (same-year collapse, "Present" only when canonical ongoing); categories Experience / Military
+  Service / Independent Projects, reverse-chron (end→start) WITHIN each category. Applied in-app,
+  PDF and DOCX.
+- d. Two-page target: budgets + compression gate detail ("two-page target", warn >28).
+- e. Multi-source provenance: claim_provenance[].node_ids and bullet.source_node_ids lists
+  (back-compat node_id/source_node_id kept); metric_integrity + canonical_truth gates check across
+  all contributing nodes.
+- CANONICAL UNTOUCHED: generation never writes career_knowledge; omitted accomplishments remain in
+  canonical + Evidence Map. Historical representations untouched. No branch merge/release.
+- Validation: 14/14 deterministic unit tests; James golden path generation/validation/export pass;
+  isolated HEB E2E (authentic canonical copied into a throwaway account, source account NOT modified,
+  cleaned up after) → USAA 11→5, CPS 10→3, Avantus 8→2; 9 entries / 24 bullets (~2 pages); all 10
+  gates pass; IP shows DIE Orbit / DPO Foundry; dates normalized; PDF clean (no CKN ids).
+
 ## Known deviations / residual risks
 - Evidence matching is AI-suggested per requirement; occasionally a valid node (e.g. Java→Go) is not
   surfaced for a specific requirement — surfaced honestly as a gap, never fabricated.

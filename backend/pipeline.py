@@ -9,6 +9,20 @@ from datetime import datetime
 # Below this, a requirement is treated as having NO sufficient canonical evidence.
 EVIDENCE_THRESHOLD = 0.35
 
+# Configurable per-position bullet budgets (defaults, not hard truncation; see server.py).
+# Targets a concise, recruiter-readable ~2-page resume.
+BULLET_BUDGET = {"primary": 5, "supporting": 3, "contextual": 2, "chronology": 1, "ip": 2}
+
+
+def _claim_node_ids(c: dict) -> list:
+    """Contributing source nodes for a claim/bullet. Multi-source (synthesized) bullets carry
+    node_ids[]; legacy single-source carry node_id. Returns a list either way."""
+    ids = c.get("node_ids")
+    if isinstance(ids, list) and ids:
+        return ids
+    nid = c.get("node_id")
+    return [nid] if nid else []
+
 
 def _recency_score(end: str) -> float:
     """Newer experience scores higher. 'present'/'current' => most recent."""
@@ -93,8 +107,10 @@ def run_quality_gates(representation: dict, nodes_by_id: dict, requirements: lis
     claim_prov = representation.get("claim_provenance", [])
     sections = representation.get("sections", {})
 
-    # 1. Canonical Truth: every claim traces to a VERIFIED node.
-    bad = [c for c in claim_prov if nodes_by_id.get(c.get("node_id"), {}).get("state") != "VERIFIED"]
+    # 1. Canonical Truth: every claim traces to VERIFIED node(s) (all contributing sources).
+    bad = [c for c in claim_prov
+           if any(nodes_by_id.get(nid, {}).get("state") != "VERIFIED" for nid in _claim_node_ids(c))
+           or not _claim_node_ids(c)]
     gates["canonical_truth"] = {
         "status": "pass" if not bad else "fail",
         "detail": "All claims trace to VERIFIED canonical nodes"
@@ -103,7 +119,9 @@ def run_quality_gates(representation: dict, nodes_by_id: dict, requirements: lis
 
     # 2. Evidence: at least one experience rendered, all from matched nodes.
     matched_node_ids = {m["source_experience"] for m in matches if m.get("match_status") == "matched"}
-    used_ids = {c.get("node_id") for c in claim_prov}
+    used_ids = set()
+    for c in claim_prov:
+        used_ids.update(_claim_node_ids(c))
     unmatched_used = used_ids - matched_node_ids
     gates["evidence"] = {
         "status": "pass" if used_ids and not unmatched_used else ("warn" if not used_ids else "fail"),
@@ -146,8 +164,8 @@ def run_quality_gates(representation: dict, nodes_by_id: dict, requirements: lis
     }
     total_bullets = sum(len(e.get("bullets", [])) for e in exp)
     gates["compression"] = {
-        "status": "pass" if total_bullets <= 24 else "warn",
-        "detail": f"{total_bullets} bullets (one-page target)",
+        "status": "pass" if total_bullets <= 28 else "warn",
+        "detail": f"{total_bullets} bullets (two-page target)",
     }
     gates["interview_defense"] = {
         "status": gates["canonical_truth"]["status"],
@@ -163,8 +181,11 @@ def _metric_violations(claim_prov, nodes_by_id):
     import re
     violations = []
     for c in claim_prov:
-        node = nodes_by_id.get(c.get("node_id"), {})
-        allowed = " ".join(node.get("retrieval", {}).get("metrics", []) or [])
+        # a metric is allowed if present in ANY contributing node's canonical metrics
+        allowed = " ".join(
+            " ".join(nodes_by_id.get(nid, {}).get("retrieval", {}).get("metrics", []) or [])
+            for nid in _claim_node_ids(c)
+        )
         text = c.get("text", "")
         for num in re.findall(r"\b\d+(?:\.\d+)?%?\b", text):
             # a bare year is fine
@@ -176,20 +197,29 @@ def _metric_violations(claim_prov, nodes_by_id):
 
 
 def _chronology_gate(sections):
+    """Reverse-chronological WITHIN each experience category (civilian/military/IP)."""
     exps = sections.get("experiences", [])
-    years = []
+
+    def ey(end):
+        e = str(end or "").lower()
+        if "present" in e or "current" in e:
+            return 9999
+        yr = [int(t) for t in e.replace("/", " ").replace("-", " ").split() if t.isdigit() and len(t) == 4]
+        return yr[0] if yr else 0
+
+    by_cat = {}
     for e in exps:
-        end = str(e.get("end", "")).lower()
-        if "present" in end or "current" in end:
-            years.append(9999)
-        else:
-            yr = [int(t) for t in end.replace("/", " ").replace("-", " ").split() if t.isdigit() and len(t) == 4]
-            years.append(yr[0] if yr else 0)
-    ordered = all(years[i] >= years[i + 1] for i in range(len(years) - 1))
+        cat = e.get("category") or ("projects" if e.get("track") == "intellectual_property"
+                                    else "military" if e.get("track") == "military" else "experience")
+        by_cat.setdefault(cat, []).append(ey(e.get("end", "")))
+    ordered = all(
+        all(years[i] >= years[i + 1] for i in range(len(years) - 1))
+        for years in by_cat.values()
+    )
     return {
         "status": "pass" if ordered else "fail",
-        "detail": "Experiences in reverse-chronological order"
-        if ordered else "Chronology out of order",
+        "detail": "Experiences in reverse-chronological order within each category"
+        if ordered else "Chronology out of order within a category",
     }
 
 

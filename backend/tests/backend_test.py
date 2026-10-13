@@ -444,15 +444,20 @@ class TestGoldenPath:
                 assert b["text"].strip()
             if e["track"] == "intellectual_property":
                 assert e["employer"] == "", f"IP rendered as employer: {e}"
-        # reverse chronological
+        # reverse chronological WITHIN each category (experience/military/projects)
         def ey(v):
             s = str(v or "").lower()
             if "present" in s or "current" in s:
                 return 9999
             ys = [int(t) for t in re.split(r"[^0-9]", s) if t.isdigit() and len(t) == 4]
             return ys[0] if ys else 0
-        years = [ey(e["end"]) for e in exps]
-        assert years == sorted(years, reverse=True), years
+        cats = {}
+        for e in exps:
+            cat = e.get("category") or ("projects" if e["track"] == "intellectual_property"
+                                        else "military" if e["track"] == "military" else "experience")
+            cats.setdefault(cat, []).append(ey(e["end"]))
+        for cat, years in cats.items():
+            assert years == sorted(years, reverse=True), (cat, years)
         # no write-back to canonical
         after = admin.get(f"{API}/career/nodes", timeout=60).json()
         norm = lambda ns: sorted([(n["node_id"], n["state"], tuple(n.get("evidence") or []), n["verified_at"]) for n in ns])
@@ -496,14 +501,18 @@ class TestGoldenPath:
             assert p.get("node_id", "").startswith("CKN-"), p
 
     def test_heading_helper_handles_empty_role(self):
-        """Unit test: resume_export._heading never produces a dangling ' — '."""
+        """Unit test: resume_export._heading — no dangling separator; IP is PROJECT-FIRST."""
         import sys as _sys
         _sys.path.insert(0, "/app/backend")
         from resume_export import _heading
         assert _heading({"role": "", "track": "intellectual_property", "organization": "X", "employer": ""}) == "X"
         assert _heading({"role": "", "track": "employment", "organization": "", "employer": ""}) == ""
-        assert _heading({"role": "Speaker", "track": "intellectual_property",
-                         "organization": "Regional Cloud Meetup", "employer": ""}) == "Speaker \u2014 Regional Cloud Meetup"
+        # IP: project name first, then role (never a bare generic role)
+        assert _heading({"role": "Creator / Product Lead", "track": "intellectual_property",
+                         "organization": "DIE Orbit", "employer": ""}) == "DIE Orbit \u2014 Creator / Product Lead"
+        # IP with NO verified project name must NOT render as a bare generic role
+        assert _heading({"role": "Developer", "track": "intellectual_property",
+                         "organization": "", "employer": ""}) != "Developer"
         assert _heading({"role": "SWE", "track": "employment", "employer": "Acme"}) == "SWE \u2014 Acme"
         # No output should start with em-dash
         for sample in [
@@ -539,9 +548,14 @@ class TestGoldenPath:
         exp_part = flat.split("Experience", 1)[-1]
         cursor, positions = 0, []
         for e in exps:
-            disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
             role = (e.get("role") or "").strip()
-            headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
+            if e["track"] == "intellectual_property":
+                disp = (e.get("organization") or "").strip()
+                headline = f"{disp} \u2014 {role}" if (disp and role) else (
+                    disp or (f"{role} \u2014 Independent Project" if role else "Independent Project"))
+            else:
+                disp = e["employer"]
+                headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
             idx = exp_part.find(headline, cursor)
             assert idx >= 0, f"headline missing/out-of-order in PDF: {headline!r}"
             # empty-role entries must not render a dangling ' — '
@@ -585,9 +599,14 @@ class TestGoldenPath:
         exp_part = flat.split("Experience", 1)[-1]
         cursor, positions = 0, []
         for e in exps:
-            disp = e["organization"] if e["track"] == "intellectual_property" else e["employer"]
             role = (e.get("role") or "").strip()
-            headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
+            if e["track"] == "intellectual_property":
+                disp = (e.get("organization") or "").strip()
+                headline = f"{disp} \u2014 {role}" if (disp and role) else (
+                    disp or (f"{role} \u2014 Independent Project" if role else "Independent Project"))
+            else:
+                disp = e["employer"]
+                headline = f"{role} \u2014 {disp}" if (role and disp) else (role or disp)
             idx = exp_part.find(headline, cursor)
             assert idx >= 0, f"headline missing/out-of-order in DOCX: {headline!r}"
             assert not headline.startswith(" \u2014") and not headline.startswith("\u2014 ")
@@ -799,3 +818,112 @@ class TestReconciliationGrouping:
     def test_no_authority_map_is_backward_compatible(self):
         sections, cp = self._call({})  # empty map -> per-node (legacy) behaviour
         assert len(sections["experiences"]) == 4
+
+
+
+# ---------- module: representation quality refinement (consolidation/dates/category) ----------
+class TestRepresentationRefinement:
+    """Deterministic unit coverage for the bounded refinement: semantic consolidation
+    validation, multi-source provenance, date formatting, category ordering, IP headings."""
+
+    def _import(self):
+        import sys as _s
+        _s.path.insert(0, "/app/backend")
+        import server
+        return server
+
+    def test_date_same_year_collapse_and_present(self):
+        s = self._import()
+        assert s._format_date_range("2026", "2026") == "2026"
+        assert s._format_date_range("Dec 2024", "Dec 2025") == "Dec 2024 – Dec 2025"
+        assert s._format_date_range("2020", "2022") == "2020 – 2022"
+        # 'Present' only when canonical explicitly marks ongoing, never inferred from empty end
+        assert s._format_date_range("2021", "Present") == "2021 – Present"
+        assert s._format_date_range("2021", "") == "2021"  # missing end != Present
+        assert s._format_date_range("", "") == ""
+
+    def test_category_classification(self):
+        s = self._import()
+        assert s._category("civilian") == "experience"
+        assert s._category("military") == "military"
+        assert s._category("intellectual_property") == "projects"
+
+    def test_assemble_orders_by_category_then_reverse_chron(self):
+        s = self._import()
+        nodes = {
+            "CIV1": {"node_id": "CIV1", "track": "civilian", "position_ref": "CIV1",
+                     "identity": {"employer": "A", "role": "R", "organization": "", "client": "",
+                                  "start": "2024", "end": "2025"}, "evidence": ["e"], "retrieval": {"metrics": []}},
+            "CIV2": {"node_id": "CIV2", "track": "civilian", "position_ref": "CIV2",
+                     "identity": {"employer": "B", "role": "R", "organization": "", "client": "",
+                                  "start": "2019", "end": "2021"}, "evidence": ["e"], "retrieval": {"metrics": []}},
+            "MIL": {"node_id": "MIL", "track": "military", "position_ref": "MIL",
+                    "identity": {"employer": "USAF", "role": "Officer", "organization": "USAF", "client": "",
+                                 "start": "2014", "end": "2025"}, "evidence": ["e"], "retrieval": {"metrics": []}},
+            "IP": {"node_id": "IP", "track": "intellectual_property", "position_ref": "IP",
+                   "identity": {"employer": "", "role": "Creator", "organization": "DIE Orbit", "client": "",
+                                "start": "2026", "end": "2026"}, "evidence": ["e"], "retrieval": {"metrics": []}},
+        }
+        gen = {"summary": "S", "experiences": [{"node_id": k, "bullets": [{"text": f"b-{k}"}]} for k in nodes]}
+        used = list(nodes.keys())
+        sections, _ = s.assemble_sections(gen, nodes, used, {k: k for k in nodes})
+        cats = [e["category"] for e in sections["experiences"]]
+        assert cats == ["experience", "experience", "military", "projects"], cats
+        # civilian reverse-chron: 2025 before 2021
+        civ = [e for e in sections["experiences"] if e["category"] == "experience"]
+        assert civ[0]["node_id"] == "CIV1" and civ[1]["node_id"] == "CIV2"
+        # IP carries display_dates collapsed to single year
+        ip = next(e for e in sections["experiences"] if e["category"] == "projects")
+        assert ip["display_dates"] == "2026"
+
+    def test_multi_source_provenance_preserved(self):
+        s = self._import()
+        nodes = {
+            "AUTH": {"node_id": "AUTH", "track": "civilian", "position_ref": "AUTH",
+                     "identity": {"employer": "USAA", "role": "DPO", "organization": "", "client": "",
+                                  "start": "2024", "end": "2025"}, "evidence": ["x"], "retrieval": {"metrics": []}},
+        }
+        # one synthesized bullet drawing from two source nodes
+        gen = {"summary": "", "experiences": [{"node_id": "AUTH", "bullets": [
+            {"text": "Merged claim", "source_node_ids": ["AUTH", "ASSOC"]}]}]}
+        sections, cp = s.assemble_sections(gen, nodes, ["AUTH"], {"AUTH": "AUTH"})
+        b = sections["experiences"][0]["bullets"][0]
+        assert b["source_node_ids"] == ["AUTH", "ASSOC"]
+        assert b["source_node_id"] == "AUTH"  # back-compat primary
+        assert cp[0]["node_ids"] == ["AUTH", "ASSOC"] and cp[0]["node_id"] == "AUTH"
+
+    def test_validate_consolidated_rejects_uncited_and_invented_metrics(self):
+        s = self._import()
+        items = [{"idx": 0, "node_id": "N1", "text": "Led API modernization across ~52 APIs"}]
+        idx_to_node = {0: "N1"}
+        nodes = {"N1": {"retrieval": {"metrics": ["~52 enterprise APIs"]}}}
+        raw = [
+            {"text": "Led API modernization across 52 APIs", "evidence_idxs": [0]},   # supported
+            {"text": "Grew revenue 300%", "evidence_idxs": [0]},                       # invented metric -> reject
+            {"text": "Did stuff", "evidence_idxs": []},                                # no citation -> reject
+        ]
+        out = s._validate_consolidated(raw, items, idx_to_node, nodes, budget=5)
+        assert len(out) == 1
+        assert out[0]["source_node_ids"] == ["N1"]
+        assert "52" in out[0]["text"]
+
+    def test_validate_consolidated_respects_budget(self):
+        s = self._import()
+        items = [{"idx": i, "node_id": "N1", "text": f"claim {i}"} for i in range(6)]
+        idx_to_node = {i: "N1" for i in range(6)}
+        nodes = {"N1": {"retrieval": {"metrics": []}}}
+        raw = [{"text": f"bullet {i}", "evidence_idxs": [i]} for i in range(6)]
+        out = s._validate_consolidated(raw, items, idx_to_node, nodes, budget=3)
+        assert len(out) == 3
+
+    def test_fallback_bullets_dedup_and_authoritative_first(self):
+        s = self._import()
+        nodes = {
+            "AUTH": {"evidence": ["Alpha accomplishment", "Shared claim"]},
+            "ASSOC": {"evidence": ["shared claim", "Beta accomplishment"]},
+        }
+        out = s._fallback_bullets(["ASSOC", "AUTH"], "AUTH", nodes, budget=5)
+        texts = [b["text"] for b in out]
+        assert texts[0] == "Alpha accomplishment"  # authoritative first
+        # case-insensitive dedup of 'shared claim'
+        assert sum(1 for t in texts if t.lower().startswith("shared claim")) == 1

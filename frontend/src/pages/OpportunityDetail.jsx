@@ -354,7 +354,8 @@ function EvidenceMap({ map, busy }) {
   );
 }
 
-function EvidenceIndicator({ exp, nodeId }) {
+function EvidenceIndicator({ exp, nodeIds }) {
+  const ids = (nodeIds || []).filter(Boolean);
   const src = exp.track === "intellectual_property" ? exp.organization : exp.employer;
   return (
     <Popover>
@@ -377,8 +378,10 @@ function EvidenceIndicator({ exp, nodeId }) {
             Canonical Evidence
           </div>
           <div className="text-xs">
-            <span className="text-slate-500">Node ID:</span>{" "}
-            <span className="font-mono text-slate-200">{nodeId}</span>
+            <span className="text-slate-500">
+              {ids.length > 1 ? "Source nodes:" : "Node ID:"}
+            </span>{" "}
+            <span className="font-mono text-slate-200">{ids.join(", ")}</span>
           </div>
           <div className="text-xs">
             <span className="text-slate-500">Verified source:</span>{" "}
@@ -394,7 +397,8 @@ function EvidenceIndicator({ exp, nodeId }) {
             </div>
           )}
           <div className="flex items-center gap-1.5 text-xs text-emerald-400">
-            <CheckCircle2 className="w-3.5 h-3.5" /> VERIFIED canonical node
+            <CheckCircle2 className="w-3.5 h-3.5" />{" "}
+            {ids.length > 1 ? `${ids.length} VERIFIED canonical nodes` : "VERIFIED canonical node"}
           </div>
         </div>
       </PopoverContent>
@@ -410,6 +414,18 @@ function Representation({ rep, onExport }) {
       </div>
     );
   const s = rep.sections;
+  const CATS = [
+    ["experience", "Experience"],
+    ["military", "Military Service"],
+    ["projects", "Independent Projects"],
+  ];
+  const catOf = (e) =>
+    e.category ||
+    (e.track === "intellectual_property"
+      ? "projects"
+      : e.track === "military"
+      ? "military"
+      : "experience");
   return (
     <div className="max-w-3xl mx-auto" data-testid="resume-preview-container">
       <div className="flex items-center justify-end gap-2 mb-3">
@@ -436,52 +452,58 @@ function Representation({ rep, onExport }) {
           <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 mb-2">Professional Summary</div>
           <p className="text-sm text-slate-200 leading-relaxed">{s.summary}</p>
         </div>
-        <div className="space-y-5">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400">Experience</div>
-          {s.experiences.map((e) => (
-            <div key={e.node_id} className="border-l-2 border-[#243044] pl-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  {e.role ? (
-                    <>
-                      <div className="font-display font-semibold text-slate-100">{e.role}</div>
-                      <div className="text-sm text-slate-400">
-                        {e.track === "intellectual_property" ? e.organization : e.employer}
-                        {e.client && <span className="text-purple-300"> · client: {e.client}</span>}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="font-display font-semibold text-slate-100">
-                      {(e.track === "intellectual_property" ? e.organization : e.employer) || "Experience"}
-                      {e.client && (
-                        <span className="text-sm text-purple-300 font-normal"> · client: {e.client}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <TrackBadge track={e.track} />
-                  <span className="font-mono text-[10px] text-slate-500">{e.start} – {e.end}</span>
-                </div>
-              </div>
-              <ul className="mt-2 space-y-1.5">
-                {e.bullets.map((b, i) => (
-                  <li key={i} className="text-sm text-slate-300 flex gap-2 group">
-                    <span className="text-cyan-500 mt-1">▸</span>
-                    <span>
-                      {b.text}
-                      <EvidenceIndicator exp={e} nodeId={b.source_node_id} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
+        {CATS.map(([cat, label]) => {
+          const items = s.experiences.filter((e) => catOf(e) === cat);
+          if (!items.length) return null;
+          return (
+            <div key={cat} className="space-y-5" data-testid={`resume-category-${cat}`}>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-400">{label}</div>
+              {items.map((e) => <ExperienceEntry key={e.node_id} e={e} />)}
             </div>
-          ))}
-        </div>
+          );
+        })}
         <div className="border-t border-[#243044] pt-3 font-mono text-[10px] text-slate-500">
           Template v{rep.template_version} · Contract v{rep.contract_version} · {rep.claim_provenance.length} traceable claims
         </div>
       </div>
+    </div>
+  );
+}
+
+function ExperienceEntry({ e }) {
+  const isIP = e.track === "intellectual_property";
+  const projectName = (e.organization || "").trim();
+  const title = isIP ? projectName || "Independent Project" : e.role || e.employer || "Experience";
+  const subtitle = isIP ? e.role : e.employer;
+  const dates = e.display_dates != null ? e.display_dates : `${e.start} – ${e.end}`;
+  return (
+    <div className="border-l-2 border-[#243044] pl-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="font-display font-semibold text-slate-100">{title}</div>
+          {(subtitle || e.client) && (
+            <div className="text-sm text-slate-400">
+              {subtitle}
+              {e.client && <span className="text-purple-300">{subtitle ? " · " : ""}client: {e.client}</span>}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <TrackBadge track={e.track} />
+          <span className="font-mono text-[10px] text-slate-500">{dates}</span>
+        </div>
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {e.bullets.map((b, i) => (
+          <li key={i} className="text-sm text-slate-300 flex gap-2 group">
+            <span className="text-cyan-500 mt-1">▸</span>
+            <span>
+              {b.text}
+              <EvidenceIndicator exp={e} nodeIds={b.source_node_ids || [b.source_node_id]} />
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

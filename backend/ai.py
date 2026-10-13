@@ -216,3 +216,80 @@ async def write_resume_language(role: str, org: str, evidence_blocks: list[dict]
         RESUME_PROMPT.format(role=role, org=org or "", evidence="\n\n".join(blocks)),
     )
     return data
+
+
+# --------------------- Bounded semantic consolidation + summary ---------------------
+# Deterministic code selects the eligible verified evidence, grouping and budget; the LLM
+# only merges overlapping claims and tightens language. It MUST NOT introduce any fact,
+# metric, technology, relationship or achievement absent from the supplied evidence.
+
+CONSOLIDATE_SYSTEM = """You are the Career OS evidence consolidation writer. You merge
+overlapping, already-verified evidence for ONE position into a small set of STRONG, DISTINCT
+resume bullets, prioritized for a target role. You may rephrase and combine, but you must NOT
+introduce any fact, metric, number, technology, employer, client or achievement that is not
+present in the provided evidence. Every bullet must cite the evidence indices it draws from.
+Return ONLY JSON."""
+
+CONSOLIDATE_PROMPT = """Target role: "{role}" at "{org}"
+Position: {position}
+
+Relevant target requirements (prioritize evidence that supports these):
+{reqs}
+
+VERIFIED EVIDENCE (index :: text):
+{evidence}
+
+Write AT MOST {budget} resume bullets for this position:
+- MERGE evidence items that describe the SAME accomplishment into one bullet; never repeat the
+  same claim (e.g. API ownership, SOAP->REST, backlog, a migration, a page-count assessment)
+  across multiple bullets.
+- Keep genuinely DISTINCT accomplishments in separate bullets.
+- Prefer the claims most relevant to the target requirements.
+- Use ONLY the evidence above. Do NOT invent facts, numbers, tools, employers or clients.
+- Each bullet MUST cite the evidence indices it draws from.
+
+Return JSON array:
+[{{"text": "<resume bullet>", "evidence_idxs": [<int>, ...]}}]
+Return ONLY the JSON array."""
+
+
+async def consolidate_position(role: str, org: str, position_label: str,
+                               requirement_texts: list[str], evidence_items: list[dict],
+                               budget: int) -> list[dict]:
+    """Return [{text, evidence_idxs:[..]}] — bounded, no invented facts. Caller validates."""
+    if not evidence_items:
+        return []
+    listing = "\n".join(f'{it["idx"]} :: {it["text"]}' for it in evidence_items)
+    reqs = "\n".join(f"- {t}" for t in requirement_texts) or "- (general professional relevance)"
+    data = await _ask_json(
+        CONSOLIDATE_SYSTEM,
+        CONSOLIDATE_PROMPT.format(role=role, org=org or "", position=position_label,
+                                  reqs=reqs, evidence=listing, budget=budget),
+    )
+    return data if isinstance(data, list) else data.get("bullets", [])
+
+
+SUMMARY_SYSTEM = """You are the Career OS resume summary writer. You write a concise, recruiter-
+readable professional summary grounded ONLY in the provided bullets. No invented facts, metrics
+or titles. Return ONLY JSON {"summary": "..."}."""
+
+SUMMARY_PROMPT = """Target role: "{role}" at "{org}"
+
+Write a 3-4 sentence professional summary for this candidate, grounded ONLY in these selected,
+already-verified resume bullets. Do not invent facts, numbers or employers.
+
+SELECTED BULLETS:
+{bullets}
+
+Return JSON: {{"summary": "<3-4 sentences>"}}. Return ONLY the JSON."""
+
+
+async def write_summary(role: str, org: str, bullet_texts: list[str]) -> str:
+    if not bullet_texts:
+        return ""
+    data = await _ask_json(
+        SUMMARY_SYSTEM,
+        SUMMARY_PROMPT.format(role=role, org=org or "", bullets="\n".join(f"- {b}" for b in bullet_texts[:20])),
+    )
+    s = data.get("summary", "") if isinstance(data, dict) else ""
+    return s if isinstance(s, str) else ""

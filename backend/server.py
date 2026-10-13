@@ -451,12 +451,56 @@ async def evidence_map(opp_id: str, user: dict = Depends(get_current_user)):
 
 
 # =========================== GENERATION + VALIDATION ===========================
+WEIGHT_RANK = {"primary": 3, "supporting": 2, "contextual": 1, "chronology": 0, "none": 0}
+WEIGHT_NAME = {3: "primary", 2: "supporting", 1: "contextual", 0: "chronology"}
+CATEGORY_ORDER = ["experience", "military", "projects"]
+
+
+def _category(track):
+    if track == "intellectual_property":
+        return "projects"
+    if track == "military":
+        return "military"
+    return "experience"
+
+
+def _year_in(v):
+    yrs = [int(t) for t in re.split(r"[^0-9]", str(v or "")) if t.isdigit() and len(t) == 4]
+    return yrs[0] if yrs else 0
+
+
 def _end_year(end):
     e = str(end or "").lower()
     if "present" in e or "current" in e:
         return 9999
-    yrs = [int(t) for t in re.split(r"[^0-9]", e) if t.isdigit() and len(t) == 4]
-    return yrs[0] if yrs else 0
+    return _year_in(e)
+
+
+def _start_year(start):
+    return _year_in(start)
+
+
+def _format_date_range(start, end):
+    """Representation-layer date formatting (canonical dates unchanged).
+
+    Same-year start==end -> show the year once; 'Present' only when canonical explicitly marks
+    an ongoing role (never inferred from a missing end date)."""
+    s = str(start or "").strip()
+    e = str(end or "").strip()
+    el = e.lower()
+    ongoing = any(w in el for w in ("present", "current", "now"))
+    if ongoing:
+        return f"{s} – Present" if s else "Present"
+    if not s and not e:
+        return ""
+    if not e:
+        return s
+    if not s:
+        return e
+    sy, ey = _year_in(s), _year_in(e)
+    if sy and ey and sy == ey and (s == e or (s == str(sy) and e == str(ey))):
+        return s if len(s) >= len(e) else e
+    return f"{s} – {e}"
 
 
 def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
@@ -464,9 +508,10 @@ def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
 
     Groups matched nodes by AUTHORITATIVE position (authority_map: source_node_id ->
     authoritative_node_id) so a position with associated/superseded records renders as a
-    SINGLE employment/assignment entry, while each bullet keeps claim-level provenance to
-    its ORIGINAL source node. Tolerant of malformed LLM output (non-dict gen/experiences/
-    bullets ignored) and never invents claims — bullets fall back to canonical evidence.
+    SINGLE employment/assignment entry. Each bullet keeps claim-level provenance to ALL its
+    contributing source nodes (source_node_ids[]; source_node_id kept for back-compat).
+    Experiences are ordered by category (experience -> military -> projects), reverse-
+    chronological within each. Tolerant of malformed LLM output; never invents claims.
     """
     if not isinstance(gen, dict):
         gen = {}
@@ -476,7 +521,7 @@ def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
         if isinstance(e, dict) and e.get("node_id"):
             gen_exp[e["node_id"]] = e
 
-    groups = {}   # authoritative_id -> list[{text, source_node_id}]
+    groups = {}   # authoritative_id -> list[{text, source_node_id, source_node_ids}]
     order = []
     for nid in used_node_ids:
         node = nodes.get(nid)
@@ -488,17 +533,19 @@ def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
         if auth_id not in groups:
             groups[auth_id] = []
             order.append(auth_id)
-        bullets = []
+        bullets = []  # list of (text, source_node_ids)
         for b in gen_exp.get(nid, {}).get("bullets", []) or []:
             if not isinstance(b, dict):
                 continue
             text = (b.get("text") or "").strip()
-            if text:
-                bullets.append(text)
+            if not text:
+                continue
+            sids = [s for s in (b.get("source_node_ids") or []) if s] or [nid]
+            bullets.append((text, sids))
         if not bullets:
-            bullets = list(node["evidence"][:3])  # canonical fallback, no invention
-        for t in bullets:
-            groups[auth_id].append({"text": t, "source_node_id": nid})
+            bullets = [(t, [nid]) for t in node["evidence"][:3]]  # canonical fallback, no invention
+        for text, sids in bullets:
+            groups[auth_id].append({"text": text, "source_node_id": sids[0], "source_node_ids": sids})
 
     experiences = []
     claim_prov = []
@@ -510,18 +557,105 @@ def assemble_sections(gen, nodes, used_node_ids, authority_map=None):
         employer = "" if anode["track"] == "intellectual_property" else ident.get("employer", "")
         bl = groups[auth_id]
         for b in bl:
-            claim_prov.append({"text": b["text"], "node_id": b["source_node_id"]})
+            claim_prov.append({"text": b["text"], "node_id": b["source_node_id"],
+                               "node_ids": b["source_node_ids"]})
         experiences.append({
             "node_id": auth_id, "employer": employer, "role": ident.get("role", ""),
             "organization": ident.get("organization", ""), "client": ident.get("client", ""),
-            "track": anode["track"], "start": ident.get("start", ""), "end": ident.get("end", ""),
+            "track": anode["track"], "category": _category(anode["track"]),
+            "start": ident.get("start", ""), "end": ident.get("end", ""),
+            "display_dates": _format_date_range(ident.get("start", ""), ident.get("end", "")),
             "bullets": bl,
         })
-    experiences.sort(key=lambda e: _end_year(e["end"]), reverse=True)
+    experiences.sort(key=lambda e: (CATEGORY_ORDER.index(e["category"]),
+                                    -_end_year(e["end"]), -_start_year(e["start"])))
     summary = gen.get("summary", "")
     if not isinstance(summary, str):
         summary = ""
     return {"summary": summary, "experiences": experiences}, claim_prov
+
+
+def _validate_consolidated(raw, items, idx_to_node, nodes, budget):
+    """Reject LLM bullets that cite no evidence or introduce unsupported numbers. Returns
+    [{text, source_node_ids}]. Metric tokens must appear in cited evidence or contributing
+    nodes' canonical metrics."""
+    by_idx = {it["idx"]: it for it in items}
+    out = []
+    for b in raw or []:
+        if not isinstance(b, dict):
+            continue
+        text = (b.get("text") or "").strip()
+        if not text:
+            continue
+        idxs = [i for i in (b.get("evidence_idxs") or []) if isinstance(i, int) and i in by_idx]
+        if not idxs:
+            continue  # every bullet must cite verified evidence
+        sids = []
+        for i in idxs:
+            nid = idx_to_node[i]
+            if nid not in sids:
+                sids.append(nid)
+        cited = " ".join(by_idx[i]["text"] for i in idxs)
+        node_metrics = " ".join(
+            " ".join(nodes.get(n, {}).get("retrieval", {}).get("metrics", []) or []) for n in sids
+        )
+        allowed = cited + " " + node_metrics
+        ok = True
+        for num in re.findall(r"\d+(?:[.,]\d+)?%?\+?", text):
+            if len(num) == 4 and num.isdigit():
+                continue  # bare year
+            if num not in allowed:
+                ok = False
+                break
+        if not ok:
+            continue
+        out.append({"text": text, "source_node_ids": sids})
+        if len(out) >= budget:
+            break
+    return out
+
+
+def _fallback_bullets(source_nids, auth_id, nodes, budget):
+    """Deterministic, de-duplicated fallback when consolidation is unavailable/invalid.
+    Authoritative node evidence first; never invents."""
+    out, seen = [], set()
+    ordered = [auth_id] + [n for n in source_nids if n != auth_id]
+    for nid in ordered:
+        for ev in nodes.get(nid, {}).get("evidence", []) or []:
+            key = ev.strip().lower()[:48]
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append({"text": ev, "source_node_ids": [nid]})
+            if len(out) >= budget:
+                return out
+    return out
+
+
+async def _consolidate_position(auth_id, pos, nodes, target_role, target_org, sem):
+    async with sem:
+        anode = nodes.get(auth_id, {})
+        items, idx_to_node = [], {}
+        for nid in pos["sources"]:
+            for ev in nodes.get(nid, {}).get("evidence", []) or []:
+                i = len(items)
+                items.append({"idx": i, "node_id": nid, "text": ev})
+                idx_to_node[i] = nid
+        if _category(anode.get("track")) == "projects":
+            budget = pipeline.BULLET_BUDGET["ip"]
+        else:
+            budget = pipeline.BULLET_BUDGET.get(WEIGHT_NAME.get(pos["weight_rank"], "chronology"), 2)
+        req_texts = [t for (_, t) in sorted(pos["reqs"].values(), key=lambda x: x[0])][:5]
+        label = f'{anode.get("identity", {}).get("role", "")} @ {anode.get("identity", {}).get("employer", "") or anode.get("identity", {}).get("organization", "")}'
+        try:
+            raw = await ai.consolidate_position(target_role, target_org, label, req_texts, items, budget)
+        except Exception:
+            logger.exception("consolidation failed for %s", auth_id)
+            raw = []
+        bullets = _validate_consolidated(raw, items, idx_to_node, nodes, budget)
+        if not bullets:
+            bullets = _fallback_bullets(pos["sources"], auth_id, nodes, budget)
+        return auth_id, bullets
 
 
 @api.post("/opportunities/{opp_id}/generate")
@@ -543,28 +677,61 @@ async def generate_resume(opp_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=409, detail="Run evidence matching before generation")
 
     nodes = {n["node_id"]: ser_keep(n) for n in await node_repo.find({"state": "VERIFIED"})}
-    # only matched verified evidence, grouped by node
-    used_node_ids = {m["source_experience"] for m in matches}
-    blocks = []
-    for nid in used_node_ids:
-        node = nodes.get(nid)
-        if not node:
-            continue
-        blocks.append({
-            "node_id": nid, "identity": node["identity"],
-            "evidence": node["evidence"], "metrics": node.get("retrieval", {}).get("metrics", []),
-        })
-
-    try:
-        gen = await ai.write_resume_language(opp["target_role"], opp.get("organization", ""), blocks)
-    except Exception as e:
-        logger.exception("generation failed")
-        raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
-
-    # Deterministic, malformed-output-tolerant assembly (reverse-chronological, verified-only).
-    # authority_map groups associated/superseded records under their authoritative position.
     authority_map = {nid: (n.get("position_ref") or nid) for nid, n in nodes.items()}
-    sections, claim_prov = assemble_sections(gen, nodes, used_node_ids, authority_map)
+
+    # Deterministic target-relevant selection: group matched source nodes by authoritative
+    # position; a position's bullet budget is driven by its strongest representation_weight.
+    req_repo = OwnedRepo("requirements", user["id"])
+    req_by_id = {str(r["_id"]): r for r in await req_repo.find({"opportunity_id": opp_id})}
+    target_role = opp["target_role"]
+    target_org = opp.get("organization", "")
+
+    positions = {}  # auth_id -> {sources:[], weight_rank, reqs:{req_id:(tier,text)}}
+    for m in matches:
+        nid = m.get("source_experience")
+        if nid not in nodes:
+            continue
+        auth_id = authority_map.get(nid, nid)
+        if auth_id not in nodes:
+            auth_id = nid
+        pos = positions.setdefault(auth_id, {"sources": [], "weight_rank": 0, "reqs": {}})
+        if nid not in pos["sources"]:
+            pos["sources"].append(nid)
+        pos["weight_rank"] = max(pos["weight_rank"], WEIGHT_RANK.get(m.get("representation_weight"), 0))
+        r = req_by_id.get(str(m.get("requirement_id")))
+        if r:
+            pos["reqs"][str(m["requirement_id"])] = (r.get("tier", 3), r.get("text", ""))
+
+    if not positions:
+        raise HTTPException(status_code=409, detail="No matched verified evidence to generate from")
+
+    # Bounded semantic consolidation per authoritative position (concurrency-limited).
+    sem = asyncio.Semaphore(5)
+    results = await asyncio.gather(
+        *[_consolidate_position(aid, pos, nodes, target_role, target_org, sem)
+          for aid, pos in positions.items()]
+    )
+    consolidated = {aid: bullets for aid, bullets in results}
+
+    # Summary grounded in the strongest selected bullets.
+    ranked_positions = sorted(positions.items(), key=lambda kv: -kv[1]["weight_rank"])
+    top_bullet_texts = []
+    for aid, _ in ranked_positions:
+        for b in consolidated.get(aid, [])[:2]:
+            top_bullet_texts.append(b["text"])
+    try:
+        summary = await ai.write_summary(target_role, target_org, top_bullet_texts)
+    except Exception:
+        logger.exception("summary generation failed")
+        summary = ""
+
+    gen = {"summary": summary, "experiences": [
+        {"node_id": aid, "bullets": bullets} for aid, bullets in consolidated.items()
+    ]}
+    used_node_ids = list(consolidated.keys())
+    identity_map = {aid: aid for aid in used_node_ids}
+    sections, claim_prov = assemble_sections(gen, nodes, used_node_ids, identity_map)
+
     rep_repo = OwnedRepo("representations", user["id"])
     for r in await rep_repo.find({"opportunity_id": opp_id}):
         await rep_repo.delete(str(r["_id"]))
